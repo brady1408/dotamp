@@ -3,6 +3,7 @@ package audio
 import (
 	"io"
 	"math"
+	"sync"
 	"testing"
 	"time"
 )
@@ -37,8 +38,11 @@ func (f *fakeSource) Seek(d time.Duration) error {
 func (f *fakeSource) Close() error { f.closed = true; return nil }
 
 // fakeOutput lets the test pull bytes from the engine's reader on demand.
+// fakePlayer is goroutine-safe like oto's player: the controller's Run
+// goroutine and the test both drive it.
 type fakeOutput struct{ p *fakePlayer }
 type fakePlayer struct {
+	mu       sync.Mutex
 	r        io.Reader
 	playing  bool
 	buffered int
@@ -46,10 +50,12 @@ type fakePlayer struct {
 }
 
 func (o *fakeOutput) NewPlayer(r io.Reader) Player { o.p = &fakePlayer{r: r}; return o.p }
-func (p *fakePlayer) Play()             { p.playing = true }
-func (p *fakePlayer) Pause()            { p.playing = false; p.pauses++ }
-func (p *fakePlayer) BufferedSize() int { return p.buffered }
-func (p *fakePlayer) Close() error      { return nil }
+func (p *fakePlayer) Play()                        { p.mu.Lock(); p.playing = true; p.mu.Unlock() }
+func (p *fakePlayer) Pause()                       { p.mu.Lock(); p.playing = false; p.pauses++; p.mu.Unlock() }
+func (p *fakePlayer) BufferedSize() int            { p.mu.Lock(); defer p.mu.Unlock(); return p.buffered }
+func (p *fakePlayer) Close() error                 { return nil }
+func (p *fakePlayer) isPlaying() bool              { p.mu.Lock(); defer p.mu.Unlock(); return p.playing }
+func (p *fakePlayer) setBuffered(n int)            { p.mu.Lock(); p.buffered = n; p.mu.Unlock() }
 func (p *fakePlayer) pull(frames int) []byte {
 	b := make([]byte, frames*4)
 	_, _ = io.ReadFull(p.r, b)
@@ -84,7 +90,7 @@ func TestEnginePlaysAndResamples(t *testing.T) {
 	defer e.Close()
 	src := &fakeSource{rate: 48000, frames: 48000} // 1 s at 48 kHz
 	e.Play(src)
-	if !out.p.playing {
+	if !out.p.isPlaying() {
 		t.Fatal("Play must start the player")
 	}
 	_, nonSilent := pullUntilDone(t, e, out.p, 60000)
@@ -136,8 +142,8 @@ func TestEngineSeekClampsAndPosition(t *testing.T) {
 	}
 	e.Seek(3 * time.Second)
 	time.Sleep(50 * time.Millisecond)
-	out.p.pull(44100)         // 1 s of output consumed
-	out.p.buffered = 4410 * 4 // 0.1 s still in the device buffer
+	out.p.pull(44100)           // 1 s of output consumed
+	out.p.setBuffered(4410 * 4) // 0.1 s still in the device buffer
 	if p := e.Position(); p < 3800*time.Millisecond || p > 4000*time.Millisecond {
 		t.Fatalf("position = %v, want ~3.9 s", p)
 	}
@@ -149,11 +155,11 @@ func TestEnginePauseResume(t *testing.T) {
 	defer e.Close()
 	e.Play(&fakeSource{rate: 44100, frames: 44100})
 	e.Pause()
-	if e.Playing() || out.p.playing {
+	if e.Playing() || out.p.isPlaying() {
 		t.Fatal("pause must stop the player")
 	}
 	e.Resume()
-	if !e.Playing() || !out.p.playing {
+	if !e.Playing() || !out.p.isPlaying() {
 		t.Fatal("resume must start the player")
 	}
 }

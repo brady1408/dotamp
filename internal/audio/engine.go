@@ -39,7 +39,7 @@ type Engine struct {
 func NewEngine(out Output) *Engine {
 	e := &Engine{
 		out:  out,
-		ring: NewRing(OutRate),   // 44100 floats = half a second of stereo
+		ring: NewRing(OutRate),    // 44100 floats = half a second of stereo
 		tap:  NewTap(OutRate * 2), // two seconds of history
 		done: make(chan struct{}, 1),
 	}
