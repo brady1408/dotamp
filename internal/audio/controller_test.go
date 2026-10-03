@@ -15,6 +15,14 @@ import (
 type fakeLib struct {
 	url   string
 	fails map[string]int // track ID -> remaining failures to inject
+	mu    sync.Mutex
+	opens []string // track IDs in the order Stream was asked for them
+}
+
+func (f *fakeLib) streamOpens() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.opens...)
 }
 
 func (f *fakeLib) Search(context.Context, string) (library.SearchResult, error) {
@@ -24,6 +32,9 @@ func (f *fakeLib) RecentAlbums(context.Context, int, int) ([]library.Album, erro
 func (f *fakeLib) AlbumTracks(context.Context, string) ([]library.Track, error)    { return nil, nil }
 func (f *fakeLib) ArtistAlbums(context.Context, string) ([]library.Album, error)   { return nil, nil }
 func (f *fakeLib) Stream(_ context.Context, t library.Track) (library.Stream, error) {
+	f.mu.Lock()
+	f.opens = append(f.opens, t.ID)
+	f.mu.Unlock()
 	if f.fails[t.ID] > 0 {
 		f.fails[t.ID]--
 		return library.Stream{URL: f.url + "/missing.flac", Codec: "flac"}, nil

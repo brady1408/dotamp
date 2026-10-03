@@ -22,10 +22,11 @@ type Controller struct {
 	qmu sync.Mutex // guards q; the ui goroutine and Run both touch it
 	q   Queue
 
-	mu      sync.Mutex // guards current, has, pre
+	mu      sync.Mutex // guards current, has, pre, retried
 	current library.Track
 	has     bool
 	pre     *prefetched
+	retried string // track ID whose stream was already reopened once
 }
 
 type prefetched struct {
@@ -91,8 +92,12 @@ func (c *Controller) stopped() {
 	c.mu.Unlock()
 }
 
-// start plays the queue's current track, trying twice before skipping forward.
+// start plays the queue's current track, trying twice before skipping
+// forward. It gives up after one pass over the queue, so Repeat cannot turn
+// a dead server into an endless loop.
 func (c *Controller) start(ctx context.Context) error {
+	var tries, size int
+	c.withQ(func(q *Queue) { size = len(q.Tracks()) })
 	for {
 		var t library.Track
 		var ok bool
@@ -101,6 +106,11 @@ func (c *Controller) start(ctx context.Context) error {
 			c.stopped()
 			return nil
 		}
+		tries++
+		if tries > size {
+			c.stopped()
+			return fmt.Errorf("nothing in the queue could be played")
+		}
 		src := c.takePrefetched(t.ID)
 		var err error
 		for attempt := 0; src == nil && attempt < 2; attempt++ {
@@ -108,7 +118,7 @@ func (c *Controller) start(ctx context.Context) error {
 		}
 		if src != nil {
 			c.mu.Lock()
-			c.current, c.has = t, true
+			c.current, c.has, c.retried = t, true, ""
 			c.mu.Unlock()
 			c.eng.Play(src)
 			return nil
@@ -191,6 +201,9 @@ func (c *Controller) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-c.eng.Done():
+			if err := c.eng.Err(); err != nil && c.recover(ctx, err) {
+				continue
+			}
 			if !c.queueNext() {
 				c.stopped()
 				continue
@@ -202,6 +215,32 @@ func (c *Controller) Run(ctx context.Context) {
 			c.maybePrefetch(ctx)
 		}
 	}
+}
+
+// recover handles a track that ended on an error: the stream is reopened
+// once from where it stopped; a second failure skips the track with a notice.
+// It reports whether playback resumed.
+func (c *Controller) recover(ctx context.Context, cause error) bool {
+	t, has := c.Current()
+	if !has {
+		return false
+	}
+	c.mu.Lock()
+	already := c.retried == t.ID
+	c.retried = t.ID
+	c.mu.Unlock()
+	pos := c.eng.Position()
+	log.Printf("track %s (%s) failed at %v: %v", t.Title, t.ID, pos, cause)
+	if !already {
+		if src, err := c.open(ctx, t); err == nil {
+			c.eng.PlayAt(src, pos)
+			return true
+		} else {
+			log.Printf("reopen %s: %v", t.ID, err)
+		}
+	}
+	c.notify(fmt.Sprintf("Skipped %s: %v", t.Title, cause))
+	return false
 }
 
 func (c *Controller) maybePrefetch(ctx context.Context) {

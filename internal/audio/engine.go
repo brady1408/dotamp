@@ -59,10 +59,20 @@ func (e *Engine) Err() error {
 	return e.err
 }
 
-func (e *Engine) Play(src Source) {
+func (e *Engine) Play(src Source) { e.PlayAt(src, 0) }
+
+// PlayAt starts src from position at, for resuming a stream that dropped.
+// A source that cannot seek there plays from its start with the clock at 0.
+func (e *Engine) PlayAt(src Source, at time.Duration) {
 	e.ctl.Lock()
 	defer e.ctl.Unlock()
 	e.stopDecode()
+	base := int64(0)
+	if at > 0 {
+		if err := src.Seek(at); err == nil {
+			base = int64(at.Seconds() * OutRate)
+		}
+	}
 	select { // a Done left by the previous source must not advance the queue
 	case <-e.done:
 	default:
@@ -76,7 +86,7 @@ func (e *Engine) Play(src Source) {
 	e.ring.Drain()
 	e.tap.Reset()
 	e.seekAt.Store(e.consumed.Load())
-	e.seekBase.Store(0)
+	e.seekBase.Store(base)
 	e.playing = true
 	stop, decoded := e.stop, e.decoded
 	e.mu.Unlock()
