@@ -34,7 +34,12 @@ type App struct {
 	notice      string
 	noticeUntil time.Time
 	layout      Layout
+
+	lastClick    time.Time
+	lastClickRow int
 }
+
+const doubleClick = 400 * time.Millisecond
 
 type noticeEvent struct {
 	tcell.EventTime
@@ -101,6 +106,7 @@ func (a *App) Handle(ev tcell.Event) bool {
 		a.setNotice(ev.msg)
 	case *tcell.EventInterrupt:
 		a.tick++
+		a.an.Update(a.layout.Analyzer.W, a.layout.Analyzer.H)
 	case *tcell.EventResize:
 		a.s.Sync()
 	case *tcell.EventMouse:
@@ -244,12 +250,19 @@ func (a *App) mouse(ev *tcell.EventMouse) {
 	case btn&tcell.Button1 != 0 && y > l.Pane.Y:
 		list := a.activeList()
 		body := Rect{l.Pane.X, l.Pane.Y + 1, l.Pane.W, l.Pane.H - 1}
-		if i := list.RowAt(body, y); i >= 0 && !list.Rows[i].Header {
-			if list.Sel == i {
-				a.activate(context.Background(), list.Selected(), false)
-			}
-			list.Sel = i
+		i := list.RowAt(body, y)
+		if i < 0 || list.Rows[i].Header {
+			return
 		}
+		now := time.Now()
+		second := i == a.lastClickRow && now.Sub(a.lastClick) < doubleClick
+		list.Sel = i
+		if second {
+			a.lastClick = time.Time{} // a third click starts over
+			a.activate(context.Background(), list.Selected(), false)
+			return
+		}
+		a.lastClick, a.lastClickRow = now, i
 	}
 }
 

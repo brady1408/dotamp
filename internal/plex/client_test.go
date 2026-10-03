@@ -101,12 +101,17 @@ func TestAlbumTracksAndStream(t *testing.T) {
 		t.Fatalf("track = %+v", tr)
 	}
 	st, err := c.Stream(context.Background(), tr)
-	if err != nil || st.Codec != "flac" || st.URL != s.URL+"/library/parts/1/1/file.flac?X-Plex-Token=tok" {
+	if err != nil || st.Codec != "flac" || st.URL != s.URL+"/library/parts/1/1/file.flac" {
 		t.Fatalf("stream = %+v err=%v", st, err)
+	}
+	// The token travels in a header only, so it never lands in a URL that a
+	// log line or an error message could carry.
+	if strings.Contains(st.URL, "tok") || st.Headers["X-Plex-Token"] != "tok" {
+		t.Fatalf("token must be a header, not a query parameter: %+v", st)
 	}
 	st2, _ := c.Stream(context.Background(), tracks[1])
 	if st2.Codec != "mp3" || !strings.Contains(st2.URL, "/music/:/transcode/universal/start.mp3?") ||
-		!strings.Contains(st2.URL, "path=%2Flibrary%2Fmetadata%2F301") {
+		!strings.Contains(st2.URL, "path=%2Flibrary%2Fmetadata%2F301") || strings.Contains(st2.URL, "tok") {
 		t.Fatalf("transcode stream = %+v", st2)
 	}
 }

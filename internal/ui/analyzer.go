@@ -48,13 +48,16 @@ func (a *Analyzer) resize(w, h int) {
 	a.nbars = w
 	a.bands = dsp.NewBands(a.nbars, fftN/2, 44100, bandLo, bandHi)
 	a.levels = make([]float64, a.nbars)
+	a.smooth.Update(a.levels) // size the smoother to the new bar count before any Draw
 }
 
-func (a *Analyzer) Draw(s tcell.Screen, r Rect) {
-	if r.W <= 0 || r.H <= 0 {
+// Update samples the tap and advances the smoother by one tick. The app calls
+// it on the 30 Hz tick only, so decay runs on time, not on key repeat.
+func (a *Analyzer) Update(w, h int) {
+	if w <= 0 || h <= 0 {
 		return
 	}
-	a.resize(r.W, r.H)
+	a.resize(w, h)
 	if n := a.src.Spectrum(fftN, a.samples); n == fftN {
 		mag := dsp.Magnitudes(a.samples, a.window)
 		a.bands.Levels(mag, a.levels)
@@ -64,7 +67,14 @@ func (a *Analyzer) Draw(s tcell.Screen, r Rect) {
 		}
 	}
 	a.smooth.Update(a.levels)
+}
 
+// Draw paints the smoother's current state.
+func (a *Analyzer) Draw(s tcell.Screen, r Rect) {
+	if r.W <= 0 || r.H <= 0 {
+		return
+	}
+	a.resize(r.W, r.H)
 	a.cv.Clear()
 	dotH := a.cv.DotH()
 	for i := 0; i < a.nbars; i++ {

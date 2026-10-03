@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/brady1408/dotamp/internal/netlog"
 )
 
 // HTTPFile is an io.ReadSeekCloser over an HTTP resource that honours Range.
@@ -28,7 +31,7 @@ type HTTPFile struct {
 }
 
 func OpenHTTP(ctx context.Context, url string, headers map[string]string) (*HTTPFile, error) {
-	f := &HTTPFile{ctx: ctx, url: url, headers: headers, client: &http.Client{}}
+	f := &HTTPFile{ctx: ctx, url: url, headers: headers, client: &http.Client{Transport: netlog.New()}}
 	if err := f.open(); err != nil {
 		return nil, err
 	}
@@ -48,6 +51,10 @@ func (f *HTTPFile) open() error {
 	}
 	resp, err := f.client.Do(req)
 	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) { // url.Error echoes the full URL, query string included
+			return fmt.Errorf("audio: GET %s: %w", redact(f.url), ue.Err)
+		}
 		return err
 	}
 	switch resp.StatusCode {
@@ -91,12 +98,7 @@ func (f *HTTPFile) Interrupt() {
 	}
 }
 
-func redact(u string) string {
-	if i := strings.Index(u, "?"); i >= 0 {
-		return u[:i]
-	}
-	return u
-}
+func redact(u string) string { return netlog.Redact(u) }
 
 func (f *HTTPFile) Size() int64 { return f.size }
 

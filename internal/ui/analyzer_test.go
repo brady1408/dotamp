@@ -37,6 +37,7 @@ func countBraille(s tcell.SimulationScreen) (lit int, maxColorRed bool) {
 func TestAnalyzerSilenceDrawsNothing(t *testing.T) {
 	s := sim(t, 80, 8)
 	a := NewAnalyzer(silent{})
+	a.Update(80, 8)
 	a.Draw(s, Rect{0, 0, 80, 8})
 	s.Show()
 	if lit, _ := countBraille(s); lit != 0 {
@@ -49,8 +50,9 @@ func TestAnalyzerSineLightsOneRegionAndReachesRed(t *testing.T) {
 	a := NewAnalyzer(sineSpectrum{hz: 44100.0 / 2048 * 46}) // bin-centred ≈ 990 Hz: no scalloping loss
 	r := Rect{0, 0, 80, 8}
 	for i := 0; i < 5; i++ { // let the caps settle
-		a.Draw(s, r)
+		a.Update(r.W, r.H)
 	}
+	a.Draw(s, r)
 	s.Show()
 	lit, red := countBraille(s)
 	if lit == 0 || lit > 80*8/4 {
@@ -64,6 +66,8 @@ func TestAnalyzerSineLightsOneRegionAndReachesRed(t *testing.T) {
 func TestAnalyzerResizes(t *testing.T) {
 	s := sim(t, 120, 10)
 	a := NewAnalyzer(sineSpectrum{hz: 440})
+	a.Update(80, 8)
 	a.Draw(s, Rect{0, 0, 80, 8})
+	a.Update(120, 10)
 	a.Draw(s, Rect{0, 0, 120, 10}) // must not panic on a wider bar count
 }

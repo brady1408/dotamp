@@ -32,19 +32,21 @@ func fft(re, im []float64) {
 	}
 }
 
-// Magnitudes windows samples, runs the FFT, and returns |X[k]| normalised so a
-// full-scale sine reads 1.0 before windowing (0.5 after Hann). len(samples) must
-// be a power of two; len(window) must equal len(samples).
+// Magnitudes windows samples, runs the FFT, and returns |X[k]| normalised by
+// the window's coherent gain, so a full-scale sine reads 1.0 whatever the
+// window. len(samples) must be a power of two; len(window) must equal it.
 func Magnitudes(samples, window []float64) []float64 {
 	n := len(samples)
 	re := make([]float64, n)
 	im := make([]float64, n)
+	gain := 0.0
 	for i := range samples {
 		re[i] = samples[i] * window[i]
+		gain += window[i]
 	}
 	fft(re, im)
 	out := make([]float64, n/2)
-	scale := 2 / float64(n)
+	scale := 2 / gain
 	for k := range out {
 		out[k] = math.Hypot(re[k], im[k]) * scale
 	}

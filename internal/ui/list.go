@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/uniseg"
 
 	"github.com/brady1408/dotamp/internal/library"
 )
@@ -97,9 +98,10 @@ func (l *List) Draw(s tcell.Screen, r Rect, focused bool) {
 		if right != "" {
 			right += " "
 		}
-		left := Fit(text, r.W-len([]rune(right)))
+		rw := uniseg.StringWidth(right)
+		left := Fit(text, r.W-rw)
 		PutStr(s, r.X, r.Y+y, left, style)
-		PutStr(s, r.X+r.W-len([]rune(right)), r.Y+y, right, style)
+		PutStr(s, r.X+r.W-rw, r.Y+y, right, style)
 	}
 }
 

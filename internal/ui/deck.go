@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/uniseg"
 )
 
 type DeckState struct {
@@ -30,20 +31,23 @@ func Clock(d time.Duration) string {
 	return fmt.Sprintf("%d:%02d", s/60, s%60)
 }
 
-// Marquee returns a width-rune window onto text. Text that fits is padded;
-// longer text scrolls one rune every 4 ticks with a gap before it repeats.
+// Marquee returns a width-cell window onto text. Text that fits is padded;
+// longer text scrolls one grapheme every 4 ticks with a gap before it repeats.
 func Marquee(text string, width, tick int) string {
-	rs := []rune(text)
-	if len(rs) <= width {
+	if uniseg.StringWidth(text) <= width {
 		return Fit(text, width)
 	}
-	loop := append(append([]rune{}, rs...), []rune("   •   ")...)
-	off := (tick / 4) % len(loop)
-	out := make([]rune, 0, width)
-	for i := 0; i < width; i++ {
-		out = append(out, loop[(off+i)%len(loop)])
+	var loop []string
+	g := uniseg.NewGraphemes(text + "   •   ")
+	for g.Next() {
+		loop = append(loop, g.Str())
 	}
-	return string(out)
+	off := (tick / 4) % len(loop)
+	var b strings.Builder
+	for i := 0; i < len(loop); i++ {
+		b.WriteString(loop[(off+i)%len(loop)])
+	}
+	return Fit(b.String(), width)
 }
 
 func DrawDeck(s tcell.Screen, r Rect, st DeckState) {
@@ -81,8 +85,9 @@ func DrawDeck(s tcell.Screen, r Rect, st DeckState) {
 			flags += " ↻"
 		}
 		right := "vol " + vol + flags + " "
-		PutStr(s, r.X, r.Y+1, Fit(info, r.W-len([]rune(right))), dim)
-		PutStr(s, r.X+r.W-len([]rune(right)), r.Y+1, right, dim)
+		rw := uniseg.StringWidth(right)
+		PutStr(s, r.X, r.Y+1, Fit(info, r.W-rw), dim)
+		PutStr(s, r.X+r.W-rw, r.Y+1, right, dim)
 	}
 
 	// Row 3: seek bar.

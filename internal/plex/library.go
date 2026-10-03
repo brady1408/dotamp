@@ -93,18 +93,19 @@ func (c *Client) ArtistAlbums(ctx context.Context, artistID string) ([]library.A
 	return albums, nil
 }
 
+// Stream never puts the token in the URL: it rides in StreamHeaders, so a
+// logged or displayed URL cannot leak it.
 func (c *Client) Stream(ctx context.Context, t library.Track) (library.Stream, error) {
-	tok := url.Values{"X-Plex-Token": {c.token}}.Encode()
 	switch t.Codec {
 	case "flac", "mp3":
 		if t.PartKey == "" {
 			return library.Stream{}, errors.New("plex: track has no part key")
 		}
-		return library.Stream{URL: c.server + t.PartKey + "?" + tok, Codec: t.Codec, Headers: c.StreamHeaders()}, nil
+		return library.Stream{URL: c.server + t.PartKey, Codec: t.Codec, Headers: c.StreamHeaders()}, nil
 	}
 	q := url.Values{
 		"path": {"/library/metadata/" + t.ID}, "mediaIndex": {"0"}, "partIndex": {"0"},
-		"protocol": {"http"}, "X-Plex-Token": {c.token},
+		"protocol": {"http"},
 	}
 	return library.Stream{URL: c.server + "/music/:/transcode/universal/start.mp3?" + q.Encode(), Codec: "mp3", Headers: c.StreamHeaders()}, nil
 }

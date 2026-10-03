@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rivo/uniseg"
 )
 
 func TestClock(t *testing.T) {
@@ -24,8 +26,8 @@ func TestMarqueeFitsAndScrollsRuneSafe(t *testing.T) {
 	seen := map[string]bool{}
 	for tick := 0; tick < 60; tick++ {
 		m := Marquee(long, 10, tick)
-		if n := len([]rune(m)); n != 10 {
-			t.Fatalf("tick %d: %d runes %q", tick, n, m)
+		if w := uniseg.StringWidth(m); w != 10 {
+			t.Fatalf("tick %d: %d cells %q", tick, w, m)
 		}
 		if strings.ContainsRune(m, '�') {
 			t.Fatalf("tick %d sliced a rune: %q", tick, m)

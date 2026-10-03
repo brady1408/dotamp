@@ -36,7 +36,7 @@ func TestMagnitudesPeakBin(t *testing.T) {
 	if best != 100 {
 		t.Fatalf("peak bin = %d, want 100", best)
 	}
-	if mag[100] < 0.4 || mag[100] > 0.6 { // Hann halves the amplitude of a unit sine
+	if mag[100] < 0.95 || mag[100] > 1.05 { // normalised for the window's gain: full scale reads 1
 		t.Fatalf("peak magnitude = %f", mag[100])
 	}
 }

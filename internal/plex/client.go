@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/brady1408/dotamp/internal/netlog"
 )
 
 const Version = "0.1.0"
@@ -26,7 +28,7 @@ func New(server, token, clientID string) *Client {
 		server:   strings.TrimRight(server, "/"),
 		token:    token,
 		clientID: clientID,
-		http:     &http.Client{Timeout: 30 * time.Second},
+		http:     &http.Client{Timeout: 30 * time.Second, Transport: netlog.New()},
 	}
 }
 
