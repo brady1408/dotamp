@@ -1,0 +1,4 @@
+{"MediaContainer":{"Hub":[
+ {"type":"artist","Metadata":[{"ratingKey":"100","title":"*NSYNC"}]},
+ {"type":"album","Metadata":[{"ratingKey":"200","title":"No Strings Attached","parentTitle":"*NSYNC","parentRatingKey":"100","year":2000,"leafCount":12,"addedAt":1757820000}]}
+]}}
