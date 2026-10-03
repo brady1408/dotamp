@@ -22,16 +22,12 @@ type Controller struct {
 	qmu sync.Mutex // guards q; the ui goroutine and Run both touch it
 	q   Queue
 
-	mu      sync.Mutex // guards current, has, pre, retried
-	current library.Track
-	has     bool
-	pre     *prefetched
-	retried string // track ID whose stream was already reopened once
-}
-
-type prefetched struct {
-	id  string
-	src Source
+	mu        sync.Mutex // guards current, has, nextID, nextTrack, retried
+	current   library.Track
+	has       bool
+	nextID    string        // track whose source is queued in the engine, "" if none
+	nextTrack library.Track // that track, for the handover
+	retried   string        // track ID whose stream was already reopened once
 }
 
 func NewController(lib library.Library, eng *Engine, notify func(string)) *Controller {
@@ -132,19 +128,22 @@ func (c *Controller) start(ctx context.Context) error {
 	}
 }
 
+// takePrefetched returns the engine's queued source if it is for track id,
+// and discards it otherwise.
 func (c *Controller) takePrefetched(id string) Source {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.pre != nil && c.pre.id == id {
-		src := c.pre.src
-		c.pre = nil
-		return src
+	queued := c.nextID
+	c.nextID = ""
+	c.mu.Unlock()
+	src := c.eng.TakeNext()
+	if src == nil {
+		return nil
 	}
-	if c.pre != nil {
-		c.pre.src.Close()
-		c.pre = nil
+	if queued != id {
+		src.Close()
+		return nil
 	}
-	return nil
+	return src
 }
 
 func (c *Controller) PlayTracks(ctx context.Context, ts []library.Track, start int) error {
@@ -200,6 +199,8 @@ func (c *Controller) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-c.eng.Handover():
+			c.onHandover()
 		case <-c.eng.Done():
 			if err := c.eng.Err(); err != nil && c.recover(ctx, err) {
 				continue
@@ -243,19 +244,40 @@ func (c *Controller) recover(ctx context.Context, cause error) bool {
 	return false
 }
 
+// onHandover runs when the engine has moved on to the queued source: the
+// queue cursor follows, and the deck shows the new track.
+func (c *Controller) onHandover() {
+	c.mu.Lock()
+	t := c.nextTrack
+	c.current, c.has, c.retried, c.nextID = t, true, "", ""
+	c.mu.Unlock()
+	c.withQ(func(q *Queue) {
+		if peek := peekQueue(q); peek != nil && peek.ID == t.ID {
+			q.Next()
+			return
+		}
+		for i, tr := range q.Tracks() { // the order changed since the prefetch
+			if tr.ID == t.ID {
+				q.Jump(i)
+				return
+			}
+		}
+	})
+}
+
+// maybePrefetch opens the next track's stream shortly before the current one
+// ends and queues it in the engine for a gapless handover.
 func (c *Controller) maybePrefetch(ctx context.Context) {
 	l := c.eng.Length()
 	if l == 0 || l-c.eng.Position() > prefetchAhead {
 		return
 	}
-	next := c.peekNext()
-	if next == nil {
+	if c.eng.PeekNext() != nil {
 		return
 	}
-	c.mu.Lock()
-	already := c.pre != nil && c.pre.id == next.ID
-	c.mu.Unlock()
-	if already {
+	var next *library.Track
+	c.withQ(func(q *Queue) { next = peekQueue(q) })
+	if next == nil {
 		return
 	}
 	src, err := c.open(ctx, *next)
@@ -264,18 +286,16 @@ func (c *Controller) maybePrefetch(ctx context.Context) {
 		return
 	}
 	c.mu.Lock()
-	if c.pre != nil {
-		c.pre.src.Close()
-	}
-	c.pre = &prefetched{id: next.ID, src: src}
+	c.nextID, c.nextTrack = next.ID, *next
 	c.mu.Unlock()
+	c.eng.SetNext(src)
 }
 
-// peekNext returns the track Next() would move to, without moving. The copy's
-// step() may build a shuffle order of its own; the real cursor is untouched.
-func (c *Controller) peekNext() *library.Track {
-	var q Queue
-	c.withQ(func(real *Queue) { q = *real })
+// peekQueue returns the track Next() would move to, without moving. It builds
+// the shuffle order first so the peek and the real Next agree.
+func peekQueue(real *Queue) *library.Track {
+	real.ensureOrder()
+	q := *real
 	if !q.Next() {
 		return nil
 	}

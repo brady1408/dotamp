@@ -70,6 +70,14 @@ func (q *Queue) buildOrder() {
 	q.opos = 0
 }
 
+// ensureOrder builds the shuffle order if Shuffle is on and none is current,
+// so a peek and the Next that follows it agree on the next track.
+func (q *Queue) ensureOrder() {
+	if q.Shuffle && (q.order == nil || len(q.order) != len(q.tracks)) {
+		q.buildOrder()
+	}
+}
+
 func (q *Queue) step(delta int) bool {
 	n := len(q.tracks)
 	if n == 0 {

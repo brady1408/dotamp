@@ -15,8 +15,13 @@ type Ring struct {
 
 func NewRing(capacity int) *Ring { return &Ring{buf: make([]float32, capacity)} }
 
-func (r *Ring) Len() int  { return max(int(r.tail.Load()-r.head.Load()), 0) }
-func (r *Ring) Free() int { return len(r.buf) - r.Len() }
+func (r *Ring) Len() int { return max(int(r.tail.Load()-r.head.Load()), 0) }
+
+// Head and Tail are the monotonic sample positions the consumer has read or
+// skipped up to, and the producer has written up to.
+func (r *Ring) Head() int64 { return r.head.Load() }
+func (r *Ring) Tail() int64 { return r.tail.Load() }
+func (r *Ring) Free() int   { return len(r.buf) - r.Len() }
 
 func (r *Ring) Write(p []float32) int {
 	n := max(min(len(p), r.Free()), 0)
