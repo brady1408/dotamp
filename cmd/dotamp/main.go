@@ -15,6 +15,7 @@ import (
 
 	"github.com/brady1408/dotamp/internal/audio"
 	"github.com/brady1408/dotamp/internal/config"
+	"github.com/brady1408/dotamp/internal/netlog"
 	"github.com/brady1408/dotamp/internal/plex"
 	"github.com/brady1408/dotamp/internal/ui"
 )
@@ -23,7 +24,7 @@ var version = "dev"
 
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
-	debugLog := flag.Bool("debug", false, "log with source locations")
+	debugLog := flag.Bool("debug", false, "log every HTTP request and source locations")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("dotamp", version)
@@ -57,6 +58,7 @@ func run(debugLog bool) (err error) {
 	flags := log.LstdFlags
 	if debugLog {
 		flags |= log.Lshortfile
+		netlog.Enabled.Store(true)
 	}
 	log.SetFlags(flags)
 	log.Printf("dotamp %s starting; config %s", version, config.Path())
@@ -98,16 +100,33 @@ func run(debugLog bool) (err error) {
 		cfg.Volume = v
 		_ = config.Save(cfg)
 	})
-	go ctrl.Run(ctx)
-
-	// A panic on the UI goroutine must restore the terminal before it reaches
-	// the user; the message points at the log.
-	defer func() {
+	// A panic on either goroutine must restore the terminal before it reaches
+	// the user; the message points at the log. The decode goroutine recovers
+	// its own panics inside the engine.
+	crashed := make(chan any, 1)
+	guard := func(where string) {
 		if r := recover(); r != nil {
-			screen.Fini()
-			log.Printf("panic: %v\n%s", r, debug.Stack())
-			err = fmt.Errorf("crashed: %v (see %s)", r, logPath)
+			log.Printf("panic in %s: %v\n%s", where, r, debug.Stack())
+			select {
+			case crashed <- r:
+			default:
+			}
+			cancel()
 		}
+	}
+	go func() {
+		defer guard("controller")
+		ctrl.Run(ctx)
 	}()
-	return app.Run(ctx)
+	func() {
+		defer guard("ui")
+		err = app.Run(ctx)
+	}()
+	select {
+	case r := <-crashed:
+		screen.Fini()
+		return fmt.Errorf("crashed: %v (see %s)", r, logPath)
+	default:
+	}
+	return err
 }
