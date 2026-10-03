@@ -30,6 +30,12 @@ type Stream struct {
 	Headers map[string]string
 }
 
+// Letter is one entry of the artist index: how many artists sort under it.
+type Letter struct {
+	Letter string
+	Count  int
+}
+
 type SearchResult struct {
 	Artists []Artist
 	Albums  []Album
@@ -41,5 +47,9 @@ type Library interface {
 	RecentAlbums(ctx context.Context, offset, limit int) ([]Album, error)
 	AlbumTracks(ctx context.Context, albumID string) ([]Track, error)
 	ArtistAlbums(ctx context.Context, artistID string) ([]Album, error)
+	// Artists returns a page of all artists in sort order and the total count.
+	Artists(ctx context.Context, offset, limit int) ([]Artist, int, error)
+	// ArtistIndex returns the first letters artists sort under, in sort order.
+	ArtistIndex(ctx context.Context) ([]Letter, error)
 	Stream(ctx context.Context, t Track) (Stream, error)
 }

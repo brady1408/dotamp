@@ -93,6 +93,35 @@ func (c *Client) ArtistAlbums(ctx context.Context, artistID string) ([]library.A
 	return albums, nil
 }
 
+func (c *Client) Artists(ctx context.Context, offset, limit int) ([]library.Artist, int, error) {
+	q := url.Values{
+		"type": {"8"}, "sort": {"titleSort"},
+		"X-Plex-Container-Start": {strconv.Itoa(offset)},
+		"X-Plex-Container-Size":  {strconv.Itoa(limit)},
+	}
+	var out container
+	if err := c.get(ctx, "/library/sections/"+c.section+"/all", q, &out); err != nil {
+		return nil, 0, err
+	}
+	artists := make([]library.Artist, 0, len(out.MediaContainer.Metadata))
+	for _, m := range out.MediaContainer.Metadata {
+		artists = append(artists, library.Artist{ID: m.RatingKey, Name: m.Title})
+	}
+	return artists, out.MediaContainer.TotalSize, nil
+}
+
+func (c *Client) ArtistIndex(ctx context.Context) ([]library.Letter, error) {
+	var out container
+	if err := c.get(ctx, "/library/sections/"+c.section+"/firstCharacter", url.Values{"type": {"8"}}, &out); err != nil {
+		return nil, err
+	}
+	letters := make([]library.Letter, 0, len(out.MediaContainer.Directory))
+	for _, d := range out.MediaContainer.Directory {
+		letters = append(letters, library.Letter{Letter: d.Title, Count: d.Size})
+	}
+	return letters, nil
+}
+
 // Stream never puts the token in the URL: it rides in StreamHeaders, so a
 // logged or displayed URL cannot leak it.
 func (c *Client) Stream(ctx context.Context, t library.Track) (library.Stream, error) {

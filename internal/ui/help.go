@@ -12,6 +12,7 @@ var helpLines = []string{
 	"Enter      play track, or play album",
 	"a          add track or album to the queue",
 	"Backspace  back (Library)",
+	"A-Z / #    jump to letter (Artists)",
 	"s / r      shuffle / repeat",
 	"?          this help",
 	"q          quit",

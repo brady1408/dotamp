@@ -86,7 +86,8 @@ func TestAppSearchAndPlayAlbum(t *testing.T) {
 	if r := rows(s); !strings.Contains(strings.Join(r, "\n"), "Search: nsync") {
 		t.Fatalf("search title missing:\n%s", strings.Join(r, "\n"))
 	}
-	key(app, tcell.KeyEnter, 0) // selected = the album -> replace queue and play
+	key(app, tcell.KeyEnter, 0) // selected = the album -> open it
+	key(app, tcell.KeyEnter, 0) // first track -> play the album from the top
 	if len(lib.played) != 1 || lib.played[0] != "300" {
 		t.Fatalf("played = %v", lib.played)
 	}

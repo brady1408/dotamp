@@ -18,9 +18,11 @@ func (stubLib) RecentAlbums(context.Context, int, int) ([]library.Album, error) 
 	return []library.Album{{ID: "1", Title: "Recent One"}, {ID: "2", Title: "Recent Two"}}, nil
 }
 func (stubLib) AlbumTracks(_ context.Context, id string) ([]library.Track, error) {
-	return []library.Track{{ID: "300", Title: "Bye Bye Bye", AlbumID: id}}, nil
+	return []library.Track{{ID: "300", Title: "Bye Bye Bye", AlbumID: id, Index: 1}, {ID: "301", Title: "It's Gonna Be Me", AlbumID: id, Index: 2}}, nil
 }
-func (stubLib) ArtistAlbums(context.Context, string) ([]library.Album, error) { return nil, nil }
+func (stubLib) Artists(context.Context, int, int) ([]library.Artist, int, error) { return nil, 0, nil }
+func (stubLib) ArtistIndex(context.Context) ([]library.Letter, error)            { return nil, nil }
+func (stubLib) ArtistAlbums(context.Context, string) ([]library.Album, error)    { return nil, nil }
 func (stubLib) Stream(context.Context, library.Track) (library.Stream, error) {
 	return library.Stream{}, nil
 }
@@ -28,6 +30,9 @@ func (stubLib) Stream(context.Context, library.Track) (library.Stream, error) {
 func TestBrowserRecentSearchOpenBack(t *testing.T) {
 	b := NewBrowser(stubLib{})
 	ctx := context.Background()
+	if err := b.LoadRoot(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if err := b.LoadRecent(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -55,6 +60,9 @@ func TestBrowserRecentSearchOpenBack(t *testing.T) {
 	}
 	if !b.Back(ctx) || b.Title() != "Recently added" {
 		t.Fatal("back should return to recent")
+	}
+	if !b.Back(ctx) || b.Title() != "Library" {
+		t.Fatal("back should return to the root menu")
 	}
 	if b.Back(ctx) {
 		t.Fatal("back at root must be false")

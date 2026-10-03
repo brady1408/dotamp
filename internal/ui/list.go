@@ -12,6 +12,7 @@ import (
 type Row struct {
 	Text, Right string
 	Header      bool
+	Menu        string // a root menu entry: MenuArtists or MenuRecent
 	Album       *library.Album
 	Track       *library.Track
 	Artist      *library.Artist

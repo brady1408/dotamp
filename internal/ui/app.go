@@ -2,8 +2,8 @@ package ui
 
 import (
 	"context"
-	"log"
 	"time"
+	"unicode"
 
 	"github.com/gdamore/tcell/v2"
 
@@ -49,10 +49,7 @@ type noticeEvent struct {
 func New(s tcell.Screen, ctrl *audio.Controller, eng *audio.Engine, lib library.Library, onVolume func(float64)) *App {
 	a := &App{s: s, ctrl: ctrl, eng: eng, lib: lib, onVolume: onVolume,
 		an: NewAnalyzer(eng), browser: NewBrowser(lib)}
-	if err := a.browser.LoadRecent(context.Background()); err != nil {
-		log.Printf("recent albums: %v", err)
-		a.setNotice("Library unavailable: " + err.Error())
-	}
+	_ = a.browser.LoadRoot(context.Background())
 	return a
 }
 
@@ -129,6 +126,12 @@ func (a *App) key(ev *tcell.EventKey) bool {
 		}
 		return false
 	}
+	if a.tab == tabLibrary && !a.help && ev.Key() == tcell.KeyRune {
+		if r := ev.Rune(); r == '#' || unicode.IsUpper(r) {
+			a.browser.JumpLetter(ctx, r)
+			return false
+		}
+	}
 	act := ActionFor(ev)
 	if a.help {
 		if act != ActNone {
@@ -202,25 +205,37 @@ func (a *App) activate(ctx context.Context, row *Row, appendOnly bool) {
 	switch {
 	case a.tab == tabQueue && row.Track != nil:
 		a.run(a.ctrl.Jump(ctx, a.queue.Sel)) // queue rows map 1:1 to tracks
+	case row.Menu == MenuArtists:
+		a.run(a.browser.OpenArtists(ctx))
+	case row.Menu == MenuRecent:
+		a.run(a.browser.LoadRecent(ctx))
 	case row.Track != nil:
 		if appendOnly {
 			a.ctrl.Enqueue(*row.Track)
 			a.setNotice("Added " + row.Track.Title)
-		} else {
-			a.run(a.ctrl.PlayTracks(ctx, []library.Track{*row.Track}, 0))
-		}
-	case row.Album != nil:
-		ts, err := a.browser.AlbumTracks(ctx, *row.Album)
-		if err != nil {
-			a.setNotice("Album failed: " + err.Error())
 			return
 		}
+		if ts, ok := a.browser.AlbumContext(); ok { // play the album from this track
+			for i := range ts {
+				if ts[i].ID == row.Track.ID {
+					a.run(a.ctrl.PlayTracks(ctx, ts, i))
+					return
+				}
+			}
+		}
+		a.run(a.ctrl.PlayTracks(ctx, []library.Track{*row.Track}, 0))
+	case row.Album != nil:
 		if appendOnly {
+			ts, err := a.browser.AlbumTracks(ctx, *row.Album)
+			if err != nil {
+				a.setNotice("Album failed: " + err.Error())
+				return
+			}
 			a.ctrl.Enqueue(ts...)
 			a.setNotice("Added " + row.Album.Title)
-		} else {
-			a.run(a.ctrl.PlayTracks(ctx, ts, 0))
+			return
 		}
+		a.run(a.browser.OpenAlbum(ctx, *row.Album))
 	case row.Artist != nil:
 		if err := a.browser.OpenArtist(ctx, *row.Artist); err != nil {
 			a.setNotice("Artist failed: " + err.Error())
@@ -316,6 +331,8 @@ func (a *App) Draw() {
 		if a.queue.Sel < 0 || a.queue.Sel >= len(a.queue.Rows) {
 			a.queue.Sel = a.ctrl.Index()
 		}
+	} else {
+		a.browser.Prepare(context.Background(), body.H)
 	}
 	a.activeList().Draw(a.s, body, !a.search.Open)
 	if a.help {

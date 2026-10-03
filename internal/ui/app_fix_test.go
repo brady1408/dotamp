@@ -9,7 +9,9 @@ import (
 
 func TestAppSingleClickSelectsDoubleClickActivates(t *testing.T) {
 	app, _, lib := newApp(t)
-	key(app, tcell.KeyTab, 0) // Library: "Albums" header at row 0, albums below
+	key(app, tcell.KeyTab, 0)   // Library root menu
+	key(app, tcell.KeyDown, 0)  // Recently added
+	key(app, tcell.KeyEnter, 0) // "Albums" header at row 0, albums below
 	app.Draw()
 	y := app.layout.Pane.Y + 1 + 2 // second album row
 	app.Handle(tcell.NewEventMouse(5, y, tcell.Button1, 0))

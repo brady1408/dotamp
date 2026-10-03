@@ -126,3 +126,28 @@ func TestErrorStatus(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestArtistsPagedInSortOrderAndLetterIndex(t *testing.T) {
+	s, seen := serve(t, map[string]string{
+		"/library/sections/3/all":            "artists.json",
+		"/library/sections/3/firstCharacter": "firstchar.json",
+	})
+	c := New(s.URL, "tok", "cid")
+	c.SetSection("3")
+	artists, total, err := c.Artists(context.Background(), 500, 2)
+	if err != nil || total != 1792 || len(artists) != 2 || artists[1].Name != "Dope Lemon" {
+		t.Fatalf("artists=%v total=%d err=%v", artists, total, err)
+	}
+	q := (*seen)[0].URL.Query()
+	if q.Get("type") != "8" || q.Get("sort") != "titleSort" ||
+		q.Get("X-Plex-Container-Start") != "500" || q.Get("X-Plex-Container-Size") != "2" {
+		t.Fatalf("query = %v", q)
+	}
+	idx, err := c.ArtistIndex(context.Background())
+	if err != nil || len(idx) != 3 || idx[0].Letter != "#" || idx[0].Count != 22 || idx[2].Letter != "B" || idx[2].Count != 159 {
+		t.Fatalf("index=%v err=%v", idx, err)
+	}
+	if q := (*seen)[1].URL.Query(); q.Get("type") != "8" {
+		t.Fatalf("index query = %v", q)
+	}
+}
