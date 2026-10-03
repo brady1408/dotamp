@@ -130,9 +130,10 @@ type Server struct {
 }
 
 type Connection struct {
-	URI   string
-	Local bool
-	Relay bool
+	URI        string
+	Local      bool
+	Relay      bool
+	Discovered bool // came from plex.tv, so Local and Relay mean something
 }
 
 type resource struct {
@@ -161,7 +162,7 @@ func (c *Client) Servers(ctx context.Context, token string) ([]Server, error) {
 		}
 		s := Server{Name: r.Name, ID: r.ClientIdentifier, Owned: r.Owned, AccessToken: r.AccessToken}
 		for _, cn := range r.Connections {
-			s.Connections = append(s.Connections, Connection{URI: cn.URI, Local: cn.Local, Relay: cn.Relay})
+			s.Connections = append(s.Connections, Connection{URI: cn.URI, Local: cn.Local, Relay: cn.Relay, Discovered: true})
 		}
 		out = append(out, s)
 	}

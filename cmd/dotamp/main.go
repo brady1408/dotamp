@@ -122,6 +122,8 @@ wait:
 
 func where(cn plextv.Connection) string {
 	switch {
+	case cn.URI == "" || !cn.Discovered:
+		return ""
 	case cn.Relay:
 		return " (relay)"
 	case cn.Local:
