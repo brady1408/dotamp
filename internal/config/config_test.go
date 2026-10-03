@@ -56,3 +56,32 @@ func TestLoadRejectsEmptyServer(t *testing.T) {
 		t.Fatal("expected error for empty server")
 	}
 }
+
+func TestLoadAcceptsAccountTokenWithoutServer(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := Save(Config{AccountToken: "acct"}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load()
+	if err != nil || c.AccountToken != "acct" || c.ClientID == "" {
+		t.Fatalf("c=%+v err=%v", c, err)
+	}
+	if !c.Manual() {
+		// no server/token: must not count as a manual server
+	} else {
+		t.Fatal("Manual() should be false without server and token")
+	}
+	_ = Save(Config{Server: "http://x", Token: "t", AccountToken: "acct"})
+	c, _ = Load()
+	if !c.Manual() {
+		t.Fatal("Manual() should be true with server and token")
+	}
+}
+
+func TestLoadRejectsNeitherServerNorAccount(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	_ = Save(Config{ClientID: "x"})
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error with neither a server nor an account token")
+	}
+}

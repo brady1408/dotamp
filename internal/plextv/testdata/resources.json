@@ -1,0 +1,11 @@
+[
+ {"name":"iPhone","product":"Plex for iOS","provides":"client","clientIdentifier":"phone","owned":true,"accessToken":"","connections":[]},
+ {"name":"m80q","product":"Plex Media Server","provides":"server","clientIdentifier":"srv1","owned":true,"accessToken":"srv-token",
+  "connections":[
+   {"protocol":"https","address":"192-168-23-23.abc.plex.direct","port":32400,"uri":"https://192-168-23-23.abc.plex.direct:32400","local":true,"relay":false},
+   {"protocol":"http","address":"192.168.23.23","port":32400,"uri":"http://192.168.23.23:32400","local":true,"relay":false},
+   {"protocol":"https","address":"24-11-39-101.abc.plex.direct","port":32400,"uri":"https://24-11-39-101.abc.plex.direct:32400","local":false,"relay":false},
+   {"protocol":"https","address":"abc.relay.plex.direct","port":8443,"uri":"https://abc.relay.plex.direct:8443","local":false,"relay":true}]},
+ {"name":"friend","product":"Plex Media Server","provides":"server","clientIdentifier":"srv2","owned":false,"accessToken":"shared-token",
+  "connections":[{"protocol":"https","address":"1-2-3-4.def.plex.direct","port":32400,"uri":"https://1-2-3-4.def.plex.direct:32400","local":false,"relay":false}]}
+]

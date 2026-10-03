@@ -2,7 +2,13 @@
 
 A terminal music player drawn in dots. Plays your Plex music library with a braille spectrum analyzer.
 
-Config lives at `~/.config/dotamp/config.json`:
+Sign in once:
+
+    dotamp login
+
+It prints a link to approve in your browser, then finds your Plex server through your account: the LAN address at home, the public address when you're away, Plex's relay as a last resort. Nothing to configure.
+
+Prefer a fixed server? Write `~/.config/dotamp/config.json` by hand instead:
 
     {"server": "http://192.168.23.23:32400", "token": "..."}
 

@@ -12,12 +12,20 @@ import (
 )
 
 type Config struct {
-	Server   string  `json:"server"`
-	Token    string  `json:"token"`
+	Server   string  `json:"server,omitempty"` // manual server URL; with Token it overrides discovery
+	Token    string  `json:"token,omitempty"`
 	ClientID string  `json:"client_id"`
 	Section  string  `json:"section,omitempty"`
 	Volume   float64 `json:"volume"`
+
+	AccountToken string `json:"account_token,omitempty"` // from `dotamp login`
+	ServerName   string `json:"server_name,omitempty"`   // which of the account's servers to use; first owned when empty
+	LastServer   string `json:"last_server,omitempty"`   // the connection discovery chose last time, for starts without plex.tv
+	LastToken    string `json:"last_token,omitempty"`
 }
+
+// Manual reports whether a hand-written server and token are set.
+func (c Config) Manual() bool { return c.Server != "" && c.Token != "" }
 
 var ErrNotFound = errors.New("config not found")
 
@@ -52,14 +60,12 @@ func Load() (Config, error) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		return Config{}, fmt.Errorf("parse %s: %w", Path(), err)
 	}
-	if c.Server == "" || c.Token == "" {
-		return Config{}, fmt.Errorf("%s: server and token are required", Path())
+	if !c.Manual() && c.AccountToken == "" {
+		return Config{}, fmt.Errorf("%s: run `dotamp login`, or set server and token", Path())
 	}
 	dirty := false
 	if c.ClientID == "" {
-		var raw [16]byte
-		_, _ = rand.Read(raw[:])
-		c.ClientID = hex.EncodeToString(raw[:])
+		c.ClientID = NewClientID()
 		dirty = true
 	}
 	if c.Volume <= 0 {
@@ -72,6 +78,13 @@ func Load() (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// NewClientID is the stable identity Plex shows for this install.
+func NewClientID() string {
+	var raw [16]byte
+	_, _ = rand.Read(raw[:])
+	return hex.EncodeToString(raw[:])
 }
 
 func Save(c Config) error {
