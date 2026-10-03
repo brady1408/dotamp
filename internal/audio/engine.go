@@ -278,6 +278,11 @@ func (e *Engine) decode(src Source, stop, decoded chan struct{}) {
 		if err == nil {
 			continue
 		}
+		select { // an interrupted read is the halt, not the end of the track
+		case <-stop:
+			return
+		default:
+		}
 		if err != io.EOF {
 			e.mu.Lock()
 			e.err = err
@@ -372,14 +377,38 @@ func (e *Engine) Seek(d time.Duration) {
 	}
 	e.haltDecoder() // parks a chained next back in the queue
 	e.ring.Drain()
+	e.mu.Lock()
+	e.err = nil
+	e.mu.Unlock()
 	if length > 0 && d >= length {
-		// Decoders reject a seek to the very end; treat it as the track ending.
+		// Decoders reject a seek to the very end; treat it as the track ending:
+		// hand over to a queued next at once, or let Done fire.
 		e.mu.Lock()
 		e.seekAt.Store(e.consumed.Load())
 		e.seekBase.Store(int64(length.Seconds() * OutRate))
 		e.doneSent.Store(false)
-		e.srcDone.Store(true)
 		e.mu.Unlock()
+		next, started := e.chainNext()
+		if next == nil {
+			e.srcDone.Store(true)
+			return
+		}
+		if started {
+			if err := next.Seek(0); err != nil {
+				e.mu.Lock()
+				e.err = err
+				e.mu.Unlock()
+				e.srcDone.Store(true)
+				return
+			}
+		}
+		e.mu.Lock()
+		e.stop = make(chan struct{})
+		e.decoded = make(chan struct{})
+		e.srcDone.Store(false)
+		stop, decoded := e.stop, e.decoded
+		e.mu.Unlock()
+		go e.decode(next, stop, decoded)
 		return
 	}
 	base := int64(d.Seconds() * OutRate)

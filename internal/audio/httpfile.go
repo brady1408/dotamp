@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/brady1408/dotamp/internal/netlog"
 )
@@ -26,9 +27,12 @@ type HTTPFile struct {
 	size    int64
 	pos     int64
 
-	mu   sync.Mutex // guards body: Interrupt and Close run on another goroutine than Read
-	body io.ReadCloser
+	mu          sync.Mutex // guards body and interrupted: Interrupt and Close run on another goroutine than Read
+	body        io.ReadCloser
+	interrupted bool // set by Interrupt; cleared by Seek. A Read in this state fails instead of reconnecting.
 }
+
+const reconnectAttempts = 3
 
 func OpenHTTP(ctx context.Context, url string, headers map[string]string) (*HTTPFile, error) {
 	f := &HTTPFile{ctx: ctx, url: url, headers: headers, client: &http.Client{Transport: netlog.New()}}
@@ -92,6 +96,25 @@ func (f *HTTPFile) Interrupt() {
 	f.mu.Lock()
 	body := f.body
 	f.body = nil
+	f.interrupted = true
+	f.mu.Unlock()
+	if body != nil {
+		body.Close()
+	}
+}
+
+var errInterrupted = errors.New("audio: read interrupted")
+
+func (f *HTTPFile) currentBody() (io.ReadCloser, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.body, f.interrupted
+}
+
+func (f *HTTPFile) dropBody() {
+	f.mu.Lock()
+	body := f.body
+	f.body = nil
 	f.mu.Unlock()
 	if body != nil {
 		body.Close()
@@ -102,24 +125,52 @@ func redact(u string) string { return netlog.Redact(u) }
 
 func (f *HTTPFile) Size() int64 { return f.size }
 
+// Read streams from the current body. A connection that ends before the
+// known size, or fails outright, is reopened at the current offset up to
+// reconnectAttempts times, so a server that dropped an idle transfer (Plex
+// does, after a long pause) is never seen by the decoder.
 func (f *HTTPFile) Read(p []byte) (int, error) {
-	f.mu.Lock()
-	body := f.body
-	f.mu.Unlock()
-	if body == nil {
-		if err := f.open(); err != nil {
+	for attempt := 0; ; attempt++ {
+		body, interrupted := f.currentBody()
+		if interrupted {
+			return 0, errInterrupted
+		}
+		if body == nil {
+			if err := f.open(); err != nil {
+				if attempt >= reconnectAttempts {
+					return 0, err
+				}
+				time.Sleep(time.Duration(attempt+1) * 50 * time.Millisecond)
+				continue
+			}
+			body, interrupted = f.currentBody()
+			if interrupted || body == nil {
+				return 0, errInterrupted
+			}
+		}
+		n, err := body.Read(p)
+		f.pos += int64(n)
+		if n > 0 {
+			return n, nil // any error comes back on the next call
+		}
+		if err == nil {
+			continue
+		}
+		if _, interrupted := f.currentBody(); interrupted {
+			return 0, errInterrupted
+		}
+		if err == io.EOF && (f.size == 0 || f.pos >= f.size) {
+			return 0, io.EOF // the real end
+		}
+		if attempt >= reconnectAttempts {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
 			return 0, err
 		}
-		f.mu.Lock()
-		body = f.body
-		f.mu.Unlock()
-		if body == nil {
-			return 0, errors.New("audio: read interrupted")
-		}
+		f.dropBody()
+		time.Sleep(time.Duration(attempt+1) * 50 * time.Millisecond)
 	}
-	n, err := body.Read(p)
-	f.pos += int64(n)
-	return n, err
 }
 
 func (f *HTTPFile) Seek(offset int64, whence int) (int64, error) {
@@ -138,10 +189,14 @@ func (f *HTTPFile) Seek(offset int64, whence int) (int64, error) {
 	if abs < 0 {
 		abs = 0
 	}
-	if abs == f.pos {
+	f.mu.Lock()
+	same := abs == f.pos && f.body != nil && !f.interrupted
+	f.interrupted = false
+	f.mu.Unlock()
+	if same {
 		return abs, nil
 	}
-	f.Interrupt()
+	f.dropBody()
 	f.pos = abs
 	return abs, nil
 }

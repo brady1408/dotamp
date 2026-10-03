@@ -2,10 +2,6 @@ package audio
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -14,41 +10,13 @@ import (
 	"github.com/brady1408/dotamp/internal/library"
 )
 
-// truncatingServer serves the FLAC fixture, but the first request for it is
-// cut off midway: a connection that drops during playback.
-func truncatingServer(t *testing.T) (*httptest.Server, *int) {
-	t.Helper()
-	data, err := os.ReadFile("testdata/sine440-44k.flac")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var mu sync.Mutex
-	requests := 0
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		requests++
-		n := requests
-		mu.Unlock()
-		if n == 1 {
-			w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-			w.WriteHeader(200)
-			_, _ = w.Write(data[:len(data)/3])
-			if h, ok := w.(http.Hijacker); ok { // close the TCP connection mid-body
-				conn, _, _ := h.Hijack()
-				conn.Close()
-			}
-			return
-		}
-		http.ServeContent(w, r, "a.flac", time.Time{}, bytesReader(data))
-	}))
-	t.Cleanup(s.Close)
-	return s, &requests
-}
-
 // A stream that fails mid-track is reopened once from the current position;
 // the track keeps playing and the queue does not advance.
 func TestControllerRetriesMidTrackFailureFromPosition(t *testing.T) {
-	srv, requests := truncatingServer(t)
+	// Request 1 is cut mid-body; the stream's own three reconnects (2–4) are
+	// rejected, so the error reaches the controller, whose reopen (5) succeeds.
+	srv, ranges := flakyServer(t, map[int]bool{1: true}, map[int]bool{2: true, 3: true, 4: true})
+	requests := func() int { return len(ranges()) }
 	lib := &fakeLib{url: srv.URL}
 	out := &fakeOutput{}
 	eng := NewEngine(out)
@@ -72,14 +40,14 @@ func TestControllerRetriesMidTrackFailureFromPosition(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("never reached b; current=%s err=%v requests=%d", cur.ID, eng.Err(), *requests)
+			t.Fatalf("never reached b; current=%s err=%v requests=%d", cur.ID, eng.Err(), requests())
 		}
 	}
 	if got := strings.Join(lib.streamOpens(), ","); got != "a,a,b" {
 		t.Fatalf("stream opens = %s, want a,a,b (a retried once, then b)", got)
 	}
-	if *requests < 3 {
-		t.Fatalf("expected a retry request, got %d", *requests)
+	if requests() < 5 {
+		t.Fatalf("expected the controller's reopen after the stream gave up, got %d requests", requests())
 	}
 	nmu.Lock()
 	defer nmu.Unlock()
