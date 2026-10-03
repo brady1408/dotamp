@@ -133,7 +133,7 @@ func TestAppMouseSeekAndListClick(t *testing.T) {
 	app, _, _ := newApp(t)
 	_ = app.ctrl.PlayTracks(context.Background(), []library.Track{{ID: "300", Title: "x", Duration: 100 * time.Second}}, 0)
 	time.Sleep(30 * time.Millisecond)
-	app.Draw() // computes the layout the mouse handler uses
+	app.Draw()                                               // computes the layout the mouse handler uses
 	app.Handle(tcell.NewEventMouse(40, 2, tcell.Button1, 0)) // halfway along the seek bar
 	// The fixture is 2 s long, so halfway along the bar is ~1 s.
 	if p := app.eng.Position(); p < 900*time.Millisecond || p > 1200*time.Millisecond {

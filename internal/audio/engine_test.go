@@ -62,15 +62,20 @@ func (p *fakePlayer) pull(frames int) []byte {
 	return b
 }
 
-func pullUntilDone(t *testing.T, e *Engine, p *fakePlayer, max int) (frames int, nonSilent int) {
+// pullUntilDone drains the engine's reader until it signals Done. The test
+// pulls far faster than real time, so most pulls return inserted silence while
+// the decoder catches up; a short sleep on those keeps the loop from spinning.
+func pullUntilDone(t *testing.T, e *Engine, p *fakePlayer) (frames int, nonSilent int) {
 	t.Helper()
 	deadline := time.After(5 * time.Second)
-	for frames < max {
+	for {
 		b := p.pull(1024)
 		frames += 1024
+		silent := true
 		for i := 0; i+1 < len(b); i += 4 {
 			if b[i] != 0 || b[i+1] != 0 {
 				nonSilent++
+				silent = false
 			}
 		}
 		select {
@@ -80,8 +85,10 @@ func pullUntilDone(t *testing.T, e *Engine, p *fakePlayer, max int) (frames int,
 			t.Fatal("engine never signalled Done")
 		default:
 		}
+		if silent {
+			time.Sleep(time.Millisecond)
+		}
 	}
-	return
 }
 
 func TestEnginePlaysAndResamples(t *testing.T) {
@@ -93,7 +100,7 @@ func TestEnginePlaysAndResamples(t *testing.T) {
 	if !out.p.isPlaying() {
 		t.Fatal("Play must start the player")
 	}
-	_, nonSilent := pullUntilDone(t, e, out.p, 60000)
+	_, nonSilent := pullUntilDone(t, e, out.p)
 	if nonSilent < 43000 || nonSilent > 45000 {
 		t.Fatalf("non-silent frames = %d, want ~44100 (resampled 1 s)", nonSilent)
 	}
