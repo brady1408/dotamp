@@ -23,14 +23,15 @@ func TestAppSingleClickSelectsDoubleClickActivates(t *testing.T) {
 		t.Fatalf("single click should select the row: %+v", sel)
 	}
 	app.Handle(tcell.NewEventMouse(5, y, tcell.Button1, 0))
-	if len(lib.played) != 1 {
-		t.Fatalf("a double click must activate; played = %v", lib.played)
+	if app.browser.Title() != "Recent Two" {
+		t.Fatalf("a double click must activate (open the album); title = %q", app.browser.Title())
 	}
-	// A second click long after the first is a new single click.
+	// A click long after the previous one is a new single click: it selects
+	// the track row under it and plays nothing.
 	app.lastClick = time.Now().Add(-time.Second)
 	app.Handle(tcell.NewEventMouse(5, y, tcell.Button1, 0))
-	if len(lib.played) != 1 {
-		t.Fatal("a slow second click must not activate")
+	if len(lib.played) != 0 {
+		t.Fatal("a slow click must not activate")
 	}
 }
 
