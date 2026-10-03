@@ -2,20 +2,24 @@ package audio
 
 import "sync/atomic"
 
-// Ring is a single-producer single-consumer ring of float32 samples.
+// Ring is a single-producer single-consumer ring of float32 samples. Only the
+// consumer moves head, so a writer never touches a slot the reader may be
+// copying; a producer-side Drain is a request the consumer applies on its
+// next Read.
 type Ring struct {
-	buf  []float32
-	head atomic.Int64 // next read index (monotonic)
-	tail atomic.Int64 // next write index (monotonic)
+	buf     []float32
+	head    atomic.Int64 // next read index (monotonic); consumer-owned
+	tail    atomic.Int64 // next write index (monotonic); producer-owned
+	drainTo atomic.Int64 // samples before this index are stale; consumer skips them
 }
 
 func NewRing(capacity int) *Ring { return &Ring{buf: make([]float32, capacity)} }
 
-func (r *Ring) Len() int  { return int(r.tail.Load() - r.head.Load()) }
+func (r *Ring) Len() int  { return max(int(r.tail.Load()-r.head.Load()), 0) }
 func (r *Ring) Free() int { return len(r.buf) - r.Len() }
 
 func (r *Ring) Write(p []float32) int {
-	n := min(len(p), r.Free())
+	n := max(min(len(p), r.Free()), 0)
 	tail := r.tail.Load()
 	for i := 0; i < n; i++ {
 		r.buf[int((tail+int64(i))%int64(len(r.buf)))] = p[i]
@@ -25,8 +29,12 @@ func (r *Ring) Write(p []float32) int {
 }
 
 func (r *Ring) Read(p []float32) int {
-	n := min(len(p), r.Len())
 	head := r.head.Load()
+	if d := r.drainTo.Load(); d > head {
+		head = d
+		r.head.Store(head)
+	}
+	n := max(min(len(p), int(r.tail.Load()-head)), 0)
 	for i := 0; i < n; i++ {
 		p[i] = r.buf[int((head+int64(i))%int64(len(r.buf)))]
 	}
@@ -34,5 +42,6 @@ func (r *Ring) Read(p []float32) int {
 	return n
 }
 
-// Drain discards everything buffered. Producer side only.
-func (r *Ring) Drain() { r.head.Store(r.tail.Load()) }
+// Drain marks everything written so far as stale. The consumer skips it on
+// its next Read; until then Len still counts it, so a full ring stays full.
+func (r *Ring) Drain() { r.drainTo.Store(r.tail.Load()) }

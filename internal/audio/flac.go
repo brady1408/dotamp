@@ -93,4 +93,10 @@ func (s *flacSource) Seek(d time.Duration) error {
 	return nil
 }
 
+func (s *flacSource) Interrupt() {
+	if i, ok := s.rs.(interrupter); ok {
+		i.Interrupt()
+	}
+}
+
 func (s *flacSource) Close() error { return s.rs.Close() }

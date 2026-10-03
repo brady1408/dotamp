@@ -2,6 +2,7 @@ package audio
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -18,6 +19,8 @@ type Engine struct {
 	ring   *Ring
 	tap    *Tap
 	done   chan struct{}
+
+	ctl sync.Mutex // serialises Play/Seek/Stop/Close: the UI and the controller's Run both call them
 
 	mu        sync.Mutex
 	src       Source
@@ -57,7 +60,13 @@ func (e *Engine) Err() error {
 }
 
 func (e *Engine) Play(src Source) {
+	e.ctl.Lock()
+	defer e.ctl.Unlock()
 	e.stopDecode()
+	select { // a Done left by the previous source must not advance the queue
+	case <-e.done:
+	default:
+	}
 	e.mu.Lock()
 	e.src, e.srcClosed, e.length, e.err = src, false, src.Length(), nil
 	e.stop = make(chan struct{})
@@ -77,22 +86,35 @@ func (e *Engine) Play(src Source) {
 
 func (e *Engine) stopDecode() {
 	e.mu.Lock()
-	stop, decoded, src, closed := e.stop, e.decoded, e.src, e.srcClosed
+	stop, decoded, src := e.stop, e.decoded, e.src
 	e.mu.Unlock()
 	if stop != nil {
 		close(stop)
+		src.Interrupt()
 		<-decoded
 	}
-	if src != nil && !closed {
+	if src := e.claimClose(); src != nil {
 		src.Close()
-		e.mu.Lock()
-		e.srcClosed = true
-		e.mu.Unlock()
 	}
 	e.ring.Drain()
 }
 
+// claimClose returns the source if this caller is the one to close it. The
+// reader (at a natural end) and the control path (on Stop/Play) both reach
+// here; the flag flips under the lock so exactly one of them closes.
+func (e *Engine) claimClose() Source {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.src == nil || e.srcClosed {
+		return nil
+	}
+	e.srcClosed = true
+	return e.src
+}
+
 func (e *Engine) Stop() {
+	e.ctl.Lock()
+	defer e.ctl.Unlock()
 	e.stopDecode()
 	e.mu.Lock()
 	e.src, e.stop, e.decoded, e.playing = nil, nil, nil, false
@@ -107,6 +129,14 @@ func (e *Engine) Close() {
 
 func (e *Engine) decode(src Source, stop, decoded chan struct{}) {
 	defer close(decoded)
+	defer func() { // a decoder bug ends the track as an error, not the process
+		if r := recover(); r != nil {
+			e.mu.Lock()
+			e.err = fmt.Errorf("decoder panic: %v", r)
+			e.mu.Unlock()
+			e.srcDone.Store(true)
+		}
+	}()
 	rs := NewResampler(src.SampleRate(), OutRate)
 	buf := make([]float32, 4096)
 	for {
@@ -172,6 +202,8 @@ func (e *Engine) Length() time.Duration {
 }
 
 func (e *Engine) Seek(d time.Duration) {
+	e.ctl.Lock()
+	defer e.ctl.Unlock()
 	e.mu.Lock()
 	src, stop, decoded, length := e.src, e.stop, e.decoded, e.length
 	e.mu.Unlock()
@@ -181,17 +213,30 @@ func (e *Engine) Seek(d time.Duration) {
 	if d < 0 {
 		d = 0
 	}
-	if length > 0 && d > length {
-		d = length
-	}
 	// Stop the decoder, seek the source, restart the decoder on the same source.
-	close(stop)
-	<-decoded
+	if stop != nil {
+		close(stop)
+		src.Interrupt()
+		<-decoded
+	}
 	e.ring.Drain()
+	if length > 0 && d >= length {
+		// Decoders reject a seek to the very end; treat it as the track ending.
+		e.mu.Lock()
+		e.stop, e.decoded = nil, nil
+		e.seekAt.Store(e.consumed.Load())
+		e.seekBase.Store(int64(length.Seconds() * OutRate))
+		e.doneSent.Store(false)
+		e.srcDone.Store(true)
+		e.mu.Unlock()
+		return
+	}
+	base := int64(d.Seconds() * OutRate)
 	if err := src.Seek(d); err != nil {
 		e.mu.Lock()
 		e.err = err
 		e.mu.Unlock()
+		base = e.positionFrames() // the source stayed put; so does the clock
 	}
 	e.mu.Lock()
 	e.stop = make(chan struct{})
@@ -199,18 +244,19 @@ func (e *Engine) Seek(d time.Duration) {
 	e.srcDone.Store(false)
 	e.doneSent.Store(false)
 	e.seekAt.Store(e.consumed.Load())
-	e.seekBase.Store(int64(d.Seconds() * OutRate))
+	e.seekBase.Store(base)
 	stop, decoded = e.stop, e.decoded
 	e.mu.Unlock()
 	go e.decode(src, stop, decoded)
 }
 
-func (e *Engine) Position() time.Duration {
+func (e *Engine) positionFrames() int64 {
 	frames := e.seekBase.Load() + e.consumed.Load() - e.seekAt.Load() - int64(e.player.BufferedSize()/4)
-	if frames < 0 {
-		frames = 0
-	}
-	return time.Duration(float64(frames) / OutRate * float64(time.Second))
+	return max(frames, 0)
+}
+
+func (e *Engine) Position() time.Duration {
+	return time.Duration(float64(e.positionFrames()) / OutRate * float64(time.Second))
 }
 
 func (e *Engine) SetVolume(v float64) {
@@ -247,12 +293,9 @@ func (r *reader) Read(p []byte) (int, error) {
 		s[i] = 0
 	}
 	if n == 0 && r.e.srcDone.Load() && r.e.doneSent.CompareAndSwap(false, true) {
-		r.e.mu.Lock()
-		if r.e.src != nil && !r.e.srcClosed {
-			r.e.src.Close()
-			r.e.srcClosed = true
+		if src := r.e.claimClose(); src != nil {
+			src.Close()
 		}
-		r.e.mu.Unlock()
 		select {
 		case r.e.done <- struct{}{}:
 		default:
@@ -271,6 +314,6 @@ func (r *reader) Read(p []byte) (int, error) {
 		}
 		binary.LittleEndian.PutUint16(p[2*i:], uint16(int16(v*32767)))
 	}
-	r.e.consumed.Add(int64(frames))
+	r.e.consumed.Add(int64(n / 2)) // inserted silence does not move the clock
 	return frames * 4, nil
 }

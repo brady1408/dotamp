@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // HTTPFile is an io.ReadSeekCloser over an HTTP resource that honours Range.
@@ -21,7 +22,9 @@ type HTTPFile struct {
 	client  *http.Client // no timeout: a track streams for as long as it is
 	size    int64
 	pos     int64
-	body    io.ReadCloser
+
+	mu   sync.Mutex // guards body: Interrupt and Close run on another goroutine than Read
+	body io.ReadCloser
 }
 
 func OpenHTTP(ctx context.Context, url string, headers map[string]string) (*HTTPFile, error) {
@@ -70,8 +73,22 @@ func (f *HTTPFile) open() error {
 		resp.Body.Close()
 		return fmt.Errorf("audio: GET %s: HTTP %d", redact(f.url), resp.StatusCode)
 	}
+	f.mu.Lock()
 	f.body = resp.Body
+	f.mu.Unlock()
 	return nil
+}
+
+// Interrupt closes the in-flight body so a blocked Read returns. The next
+// Read reopens at the current offset; a Seek reopens at the new one.
+func (f *HTTPFile) Interrupt() {
+	f.mu.Lock()
+	body := f.body
+	f.body = nil
+	f.mu.Unlock()
+	if body != nil {
+		body.Close()
+	}
 }
 
 func redact(u string) string {
@@ -84,12 +101,21 @@ func redact(u string) string {
 func (f *HTTPFile) Size() int64 { return f.size }
 
 func (f *HTTPFile) Read(p []byte) (int, error) {
-	if f.body == nil {
+	f.mu.Lock()
+	body := f.body
+	f.mu.Unlock()
+	if body == nil {
 		if err := f.open(); err != nil {
 			return 0, err
 		}
+		f.mu.Lock()
+		body = f.body
+		f.mu.Unlock()
+		if body == nil {
+			return 0, errors.New("audio: read interrupted")
+		}
 	}
-	n, err := f.body.Read(p)
+	n, err := body.Read(p)
 	f.pos += int64(n)
 	return n, err
 }
@@ -113,19 +139,12 @@ func (f *HTTPFile) Seek(offset int64, whence int) (int64, error) {
 	if abs == f.pos {
 		return abs, nil
 	}
-	if f.body != nil {
-		f.body.Close()
-		f.body = nil
-	}
+	f.Interrupt()
 	f.pos = abs
 	return abs, nil
 }
 
 func (f *HTTPFile) Close() error {
-	if f.body != nil {
-		err := f.body.Close()
-		f.body = nil
-		return err
-	}
+	f.Interrupt()
 	return nil
 }

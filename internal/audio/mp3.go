@@ -61,4 +61,10 @@ func (s *mp3Source) Seek(d time.Duration) error {
 	return err
 }
 
+func (s *mp3Source) Interrupt() {
+	if i, ok := s.rs.(interrupter); ok {
+		i.Interrupt()
+	}
+}
+
 func (s *mp3Source) Close() error { return s.rs.Close() }

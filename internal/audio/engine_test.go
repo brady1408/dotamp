@@ -35,6 +35,7 @@ func (f *fakeSource) Seek(d time.Duration) error {
 	f.pos = int(d.Seconds() * float64(f.rate))
 	return nil
 }
+func (f *fakeSource) Interrupt()   {}
 func (f *fakeSource) Close() error { f.closed = true; return nil }
 
 // fakeOutput lets the test pull bytes from the engine's reader on demand.
@@ -148,8 +149,11 @@ func TestEngineSeekClampsAndPosition(t *testing.T) {
 		t.Fatalf("position after seek past end = %v (length %v)", p, e.Length())
 	}
 	e.Seek(3 * time.Second)
-	time.Sleep(50 * time.Millisecond)
-	out.p.pull(44100)           // 1 s of output consumed
+	start := e.consumed.Load()
+	for e.consumed.Load()-start < 44100 { // 1 s of real frames; inserted silence does not count
+		out.p.pull(1024)
+		time.Sleep(time.Millisecond)
+	}
 	out.p.setBuffered(4410 * 4) // 0.1 s still in the device buffer
 	if p := e.Position(); p < 3800*time.Millisecond || p > 4000*time.Millisecond {
 		t.Fatalf("position = %v, want ~3.9 s", p)

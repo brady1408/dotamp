@@ -33,6 +33,9 @@ func TestRingPartialWriteAndDrain(t *testing.T) {
 		t.Fatalf("partial write = %d", n)
 	}
 	r.Drain()
+	if n := r.Read(make([]float32, 4)); n != 0 {
+		t.Fatalf("read after drain returned %d stale samples", n)
+	}
 	if r.Len() != 0 || r.Free() != 4 {
 		t.Fatal("drain failed")
 	}
