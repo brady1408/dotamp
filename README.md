@@ -10,7 +10,7 @@ It prints a link to approve in your browser, then finds your Plex server through
 
 Prefer a fixed server? Write `~/.config/dotamp/config.json` by hand instead:
 
-    {"server": "http://192.168.23.23:32400", "token": "..."}
+    {"server": "http://192.168.1.10:32400", "token": "..."}
 
 Run `dotamp`. Press `?` for keys.
 

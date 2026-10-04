@@ -137,13 +137,13 @@ func TestConnectPrefersLocalThenRemoteThenRelay(t *testing.T) {
 		}
 	}
 	// At home: the plain http LAN address wins over the https plex.direct one.
-	got, err := Connect(context.Background(), srv, reachable("http://192.168.23.23:32400", "https://192-168-23-23.abc.plex.direct:32400", "https://24-11-39-101.abc.plex.direct:32400"))
-	if err != nil || got.URI != "http://192.168.23.23:32400" {
+	got, err := Connect(context.Background(), srv, reachable("http://192.168.1.10:32400", "https://192-168-1-10.abc.plex.direct:32400", "https://203-0-113-7.abc.plex.direct:32400"))
+	if err != nil || got.URI != "http://192.168.1.10:32400" {
 		t.Fatalf("home = %+v err=%v", got, err)
 	}
 	// Away: local fails, the public address wins over the relay.
-	got, err = Connect(context.Background(), srv, reachable("https://24-11-39-101.abc.plex.direct:32400", "https://abc.relay.plex.direct:8443"))
-	if err != nil || got.URI != "https://24-11-39-101.abc.plex.direct:32400" {
+	got, err = Connect(context.Background(), srv, reachable("https://203-0-113-7.abc.plex.direct:32400", "https://abc.relay.plex.direct:8443"))
+	if err != nil || got.URI != "https://203-0-113-7.abc.plex.direct:32400" {
 		t.Fatalf("away = %+v err=%v", got, err)
 	}
 	// Only the relay answers.
