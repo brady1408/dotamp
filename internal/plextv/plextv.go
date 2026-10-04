@@ -120,6 +120,20 @@ func (c *Client) PollPin(ctx context.Context, p Pin, every time.Duration) (strin
 	}
 }
 
+// Subscribed reports whether the account has an active Plex Pass, which
+// decides how much the relay will carry.
+func (c *Client) Subscribed(ctx context.Context, token string) (bool, error) {
+	var u struct {
+		Subscription struct {
+			Active bool `json:"active"`
+		} `json:"subscription"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v2/user", token, &u); err != nil {
+		return false, err
+	}
+	return u.Subscription.Active, nil
+}
+
 // Server is a media server the account can reach, with every way to reach it.
 type Server struct {
 	Name        string
@@ -133,7 +147,8 @@ type Connection struct {
 	URI        string
 	Local      bool
 	Relay      bool
-	Discovered bool // came from plex.tv, so Local and Relay mean something
+	Discovered bool   // came from plex.tv, so Local and Relay mean something
+	ServerID   string // the server this connection reaches; filled by the caller
 }
 
 type resource struct {

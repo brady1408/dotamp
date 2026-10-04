@@ -151,3 +151,54 @@ func TestArtistsPagedInSortOrderAndLetterIndex(t *testing.T) {
 		t.Fatalf("index query = %v", q)
 	}
 }
+
+func TestItemsCarryServerID(t *testing.T) {
+	s, _ := serve(t, map[string]string{"/hubs/search": "search.json", "/library/metadata/200/children": "children.json"})
+	c := New(s.URL, "tok", "cid")
+	c.SetSection("3")
+	c.SetServer("srv1", "Ressikan")
+	res, _ := c.Search(context.Background(), "nsync")
+	if res.Artists[0].Server != "srv1" || res.Albums[0].Server != "srv1" {
+		t.Fatalf("search results must carry the server id: %+v", res)
+	}
+	tracks, _ := c.AlbumTracks(context.Background(), "200")
+	if tracks[0].Server != "srv1" {
+		t.Fatalf("tracks must carry the server id: %+v", tracks[0])
+	}
+}
+
+func TestStreamTranscodesOnlyWhenTheRelayCannotCarryTheFile(t *testing.T) {
+	s, _ := serve(t, map[string]string{"/library/metadata/200/children": "children.json"})
+	c := New(s.URL, "tok", "cid")
+	tracks, _ := c.AlbumTracks(context.Background(), "200")
+	flac := tracks[0] // 978 kbps
+	// Direct connection: always the original.
+	st, _ := c.Stream(context.Background(), flac)
+	if st.Codec != "flac" {
+		t.Fatalf("direct must be original: %+v", st)
+	}
+	// Relay with a Plex Pass cap of 2000 kbps: a CD FLAC fits.
+	c.SetConnection(false, true, 2000)
+	st, _ = c.Stream(context.Background(), flac)
+	if st.Codec != "flac" {
+		t.Fatalf("978 kbps fits under 2000: %+v", st)
+	}
+	// Relay with a free-account cap of 1000 kbps: it does not.
+	c.SetConnection(false, true, 1000)
+	st, _ = c.Stream(context.Background(), flac)
+	if st.Codec != "mp3" || !strings.Contains(st.URL, "musicBitrate=320") || !strings.Contains(st.URL, "path=%2Flibrary%2Fmetadata%2F300") {
+		t.Fatalf("over the cap must transcode: %+v", st)
+	}
+	// A forced remote bitrate transcodes on any non-local connection.
+	c.SetConnection(false, false, 0)
+	c.SetRemoteBitrate(192)
+	st, _ = c.Stream(context.Background(), flac)
+	if st.Codec != "mp3" || !strings.Contains(st.URL, "musicBitrate=192") {
+		t.Fatalf("forced remote bitrate must transcode: %+v", st)
+	}
+	c.SetConnection(true, false, 0) // but not on a local connection
+	st, _ = c.Stream(context.Background(), flac)
+	if st.Codec != "flac" {
+		t.Fatalf("local stays original: %+v", st)
+	}
+}

@@ -93,3 +93,23 @@ func TestLoginSavesAccountTokenAndFindsServer(t *testing.T) {
 		t.Fatal("login must not write a manual server token")
 	}
 }
+
+func TestServersCommandListsReachability(t *testing.T) {
+	bin := build(t)
+	plex := fakePlex(t)
+	home := t.TempDir()
+	login := exec.Command(bin, "login")
+	login.Env = append(os.Environ(), "XDG_CONFIG_HOME="+home, "DOTAMP_PLEXTV="+plex.URL)
+	if out, err := login.CombinedOutput(); err != nil {
+		t.Fatalf("login: %v\n%s", err, out)
+	}
+	cmd := exec.Command(bin, "servers")
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+home, "DOTAMP_PLEXTV="+plex.URL)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("servers: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "testbox") || !strings.Contains(string(out), "local") || !strings.Contains(string(out), plex.URL) {
+		t.Fatalf("servers output:\n%s", out)
+	}
+}

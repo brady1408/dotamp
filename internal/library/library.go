@@ -6,12 +6,13 @@ import (
 	"time"
 )
 
-type Artist struct{ ID, Name string }
+type Artist struct{ ID, Name, Server string }
 
 type Album struct {
 	ID, Title, Artist, ArtistID string
 	Year, TrackCount            int
 	AddedAt                     int64
+	Server                      string // which server the album lives on
 }
 
 type Track struct {
@@ -22,6 +23,7 @@ type Track struct {
 	Container                         string
 	PartKey                           string // server-relative path of the media file, e.g. /library/parts/1/1/file.flac
 	Bitrate, SampleRate, BitDepth     int
+	Server                            string // which server the track lives on
 }
 
 type Stream struct {

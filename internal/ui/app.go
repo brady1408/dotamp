@@ -53,6 +53,12 @@ func New(s tcell.Screen, ctrl *audio.Controller, eng *audio.Engine, lib library.
 	return a
 }
 
+// SetSwitcher enables the Servers menu for a multi-server library.
+func (a *App) SetSwitcher(sw Switcher) {
+	a.browser.SetSwitcher(sw)
+	_ = a.browser.LoadRoot(context.Background())
+}
+
 // Notify shows msg in the deck for a few seconds. Safe from any goroutine.
 func (a *App) Notify(msg string) {
 	_ = a.s.PostEvent(&noticeEvent{msg: msg})
@@ -209,6 +215,12 @@ func (a *App) activate(ctx context.Context, row *Row, appendOnly bool) {
 		a.run(a.browser.OpenArtists(ctx))
 	case row.Menu == MenuRecent:
 		a.run(a.browser.LoadRecent(ctx))
+	case row.Menu == MenuServers:
+		a.run(a.browser.OpenServers(ctx))
+	case row.ServerID != "":
+		if a.browser.SwitchServer(ctx, row.ServerID) {
+			a.setNotice("Browsing " + a.browser.CurrentServerName())
+		}
 	case row.Track != nil:
 		if appendOnly {
 			a.ctrl.Enqueue(*row.Track)
@@ -319,6 +331,9 @@ func (a *App) Draw() {
 	title := ""
 	if a.tab == tabLibrary {
 		title = a.browser.Title()
+		if name := a.browser.CurrentServerName(); name != "" {
+			title += "  ·  " + name
+		}
 	}
 	PutStr(a.s, l.Pane.X, l.Pane.Y, Fit(tabs+"  "+title, l.Pane.W), tcell.StyleDefault.Bold(true))
 	body := Rect{l.Pane.X, l.Pane.Y + 1, l.Pane.W, l.Pane.H - 1}
@@ -332,6 +347,7 @@ func (a *App) Draw() {
 			a.queue.Sel = a.ctrl.Index()
 		}
 	} else {
+		a.browser.RefreshRoot(context.Background())
 		a.browser.Prepare(context.Background(), body.H)
 	}
 	a.activeList().Draw(a.s, body, !a.search.Open)

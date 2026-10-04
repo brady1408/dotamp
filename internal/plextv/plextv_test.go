@@ -176,3 +176,25 @@ func TestProbeIdentity(t *testing.T) {
 		t.Fatal("a closed server must fail the probe")
 	}
 }
+
+func TestSubscribed(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v2/user", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Plex-Token") != "account-token" {
+			http.Error(w, "unauthorized", 401)
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":1,"username":"brady","subscription":{"active":true,"status":"Active"}}`))
+	})
+	s := httptest.NewServer(mux)
+	defer s.Close()
+	c := New("cid")
+	c.BaseURL = s.URL
+	ok, err := c.Subscribed(context.Background(), "account-token")
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if _, err := c.Subscribed(context.Background(), "bad"); err == nil {
+		t.Fatal("expected an error")
+	}
+}

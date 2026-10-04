@@ -2,25 +2,65 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/brady1408/dotamp/internal/library"
+	"github.com/brady1408/dotamp/internal/multi"
 )
 
 const (
 	MenuArtists = "artists"
 	MenuRecent  = "recent"
+	MenuServers = "servers"
 
 	artistPage = 200 // artists fetched per request while scrolling the index
 )
+
+// Switcher is the multi-server view the Library tab needs: which servers
+// exist, which is current, and a way to change it.
+type Switcher interface {
+	Servers() []multi.Server
+	Current() multi.Server
+	SetCurrent(id string) bool
+}
 
 // Browser is the Library tab: a stack of views, each a title and a row set.
 // The root is a small menu; Artists is an index of every artist that loads a
 // page at a time as the selection moves.
 type Browser struct {
 	lib   library.Library
+	sw    Switcher // nil when there is a single, unnamed server
 	stack []view
+}
+
+// SetSwitcher enables the Servers menu and names servers in search results.
+func (b *Browser) SetSwitcher(sw Switcher) { b.sw = sw }
+
+// CurrentServerName is shown in the tab row; empty with a single server.
+func (b *Browser) CurrentServerName() string {
+	if b.sw == nil || len(b.sw.Servers()) < 2 {
+		return ""
+	}
+	return b.sw.Current().Name
+}
+
+// serverName labels a server for a header: its name, and how it is reached
+// when that is not local, so a relay-backed copy reads as such.
+func (b *Browser) serverName(id string) string {
+	if b.sw == nil {
+		return ""
+	}
+	for _, s := range b.sw.Servers() {
+		if s.ID == id {
+			if s.Via != "" && s.Via != "local" {
+				return s.Name + " (" + s.Via + ")"
+			}
+			return s.Name
+		}
+	}
+	return id
 }
 
 type view struct {
@@ -81,13 +121,75 @@ func (b *Browser) Back(context.Context) bool {
 
 // LoadRoot resets the stack to the root menu.
 func (b *Browser) LoadRoot(context.Context) error {
-	var l List
-	l.SetRows([]Row{
+	rows := []Row{
 		{Text: "Artists", Menu: MenuArtists},
 		{Text: "Recently added", Menu: MenuRecent},
-	})
+	}
+	if b.sw != nil && len(b.sw.Servers()) > 1 {
+		rows = append(rows, Row{Text: "Servers", Menu: MenuServers})
+	}
+	var l List
+	l.SetRows(rows)
 	b.stack = []view{{title: "Library", list: l}}
 	return nil
+}
+
+// RefreshRoot rebuilds the root menu when the number of servers has changed
+// since it was built, which happens as background connections finish. It
+// does nothing when a deeper view is open.
+func (b *Browser) RefreshRoot(ctx context.Context) {
+	if len(b.stack) != 1 || b.sw == nil {
+		return
+	}
+	want := 2
+	if len(b.sw.Servers()) > 1 {
+		want = 3
+	}
+	if len(b.stack[0].list.Rows) == want {
+		return
+	}
+	sel := b.stack[0].list.Sel
+	_ = b.LoadRoot(ctx)
+	if sel >= 0 && sel < len(b.stack[0].list.Rows) {
+		b.stack[0].list.Sel = sel
+	}
+}
+
+// OpenServers lists the account's servers with the current one marked.
+func (b *Browser) OpenServers(context.Context) error {
+	if b.sw == nil {
+		return errors.New("one server only")
+	}
+	cur := b.sw.Current().ID
+	rows := []Row{{Text: "Servers", Header: true}}
+	for _, s := range b.sw.Servers() {
+		mark := "  "
+		if s.ID == cur {
+			mark = "▸ "
+		}
+		text := mark + s.Name
+		if s.Via != "" {
+			text += "  (" + s.Via + ")"
+		}
+		if !s.Owned {
+			text += "  shared"
+		}
+		rows = append(rows, Row{Text: text, ServerID: s.ID})
+	}
+	var l List
+	l.SetRows(rows)
+	b.push(view{title: "Servers", list: l})
+	return nil
+}
+
+// SwitchServer makes id the current server for browsing and returns to the
+// root menu. It reports whether the switch happened.
+func (b *Browser) SwitchServer(ctx context.Context, id string) bool {
+	if b.sw == nil || !b.sw.SetCurrent(id) {
+		return false
+	}
+	_ = b.LoadRoot(ctx)
+	return true
 }
 
 func (b *Browser) LoadRecent(ctx context.Context) error {
@@ -191,16 +293,44 @@ func (b *Browser) Search(ctx context.Context, q string) error {
 	if err != nil {
 		return err
 	}
-	rows := []Row{{Text: "Artists", Header: true}}
-	for i := range res.Artists {
-		a := &res.Artists[i]
-		rows = append(rows, Row{Text: a.Name, Artist: a})
+	// With several servers, each group is split per server so a copy on a
+	// friend's server reads as such.
+	servers := []string{""}
+	if b.sw != nil && len(b.sw.Servers()) > 1 {
+		servers = servers[:0]
+		for _, s := range b.sw.Servers() {
+			servers = append(servers, s.ID)
+		}
 	}
-	rows = append(rows, albumRows("Albums", res.Albums)...)
-	rows = append(rows, Row{Text: "Tracks", Header: true})
-	for i := range res.Tracks {
-		t := &res.Tracks[i]
-		rows = append(rows, Row{Text: t.Artist + " — " + t.Title, Right: Clock(t.Duration), Track: t})
+	header := func(kind, sid string) string {
+		if sid == "" {
+			return kind
+		}
+		return kind + " — " + b.serverName(sid)
+	}
+	var rows []Row
+	for _, sid := range servers {
+		rows = append(rows, Row{Text: header("Artists", sid), Header: true})
+		for i := range res.Artists {
+			a := &res.Artists[i]
+			if sid == "" || a.Server == sid {
+				rows = append(rows, Row{Text: a.Name, Artist: a})
+			}
+		}
+		var albums []library.Album
+		for _, a := range res.Albums {
+			if sid == "" || a.Server == sid {
+				albums = append(albums, a)
+			}
+		}
+		rows = append(rows, albumRows(header("Albums", sid), albums)...)
+		rows = append(rows, Row{Text: header("Tracks", sid), Header: true})
+		for i := range res.Tracks {
+			t := &res.Tracks[i]
+			if sid == "" || t.Server == sid {
+				rows = append(rows, Row{Text: t.Artist + " — " + t.Title, Right: Clock(t.Duration), Track: t})
+			}
+		}
 	}
 	var l List
 	l.SetRows(rows)

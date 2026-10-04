@@ -11,12 +11,14 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
 
 	"github.com/brady1408/dotamp/internal/audio"
 	"github.com/brady1408/dotamp/internal/config"
+	"github.com/brady1408/dotamp/internal/multi"
 	"github.com/brady1408/dotamp/internal/netlog"
 	"github.com/brady1408/dotamp/internal/plex"
 	"github.com/brady1408/dotamp/internal/plextv"
@@ -37,6 +39,8 @@ func main() {
 	switch flag.Arg(0) {
 	case "login":
 		err = login()
+	case "servers":
+		err = listServers()
 	case "":
 		err = run(*debugLog)
 	default:
@@ -120,6 +124,41 @@ wait:
 	return nil
 }
 
+// listServers prints every server on the account and how it can be reached.
+func listServers() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if cfg.AccountToken == "" {
+		return errors.New("not signed in; run `dotamp login`")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	servers, err := plexTV(cfg.ClientID).Servers(ctx, cfg.AccountToken)
+	if err != nil {
+		return err
+	}
+	for _, srv := range servers {
+		owner := "owned"
+		if !srv.Owned {
+			owner = "shared"
+		}
+		cn, err := plextv.Connect(ctx, srv, plextv.Probe(srv.AccessToken, cfg.ClientID))
+		if err != nil {
+			fmt.Printf("%-24s %-6s unreachable (%d connections tried)\n", srv.Name, owner, len(srv.Connections))
+			continue
+		}
+		c := plex.New(cn.URI, srv.AccessToken, cfg.ClientID)
+		music := "music library"
+		if _, err := c.MusicSection(ctx); err != nil {
+			music = "no music library"
+		}
+		fmt.Printf("%-24s %-6s %s%s  %s\n", srv.Name, owner, cn.URI, where(cn), music)
+	}
+	return nil
+}
+
 func where(cn plextv.Connection) string {
 	switch {
 	case cn.URI == "" || !cn.Discovered:
@@ -132,12 +171,48 @@ func where(cn plextv.Connection) string {
 	return " (remote)"
 }
 
+// connectOthers reaches every other server on the account in the background
+// and adds the ones with a music library, so search can fan out to them.
+func connectOthers(ctx context.Context, cfg config.Config, primaryID string, relayCap int, lib *multi.Library) {
+	servers, err := plexTV(cfg.ClientID).Servers(ctx, cfg.AccountToken)
+	if err != nil {
+		log.Printf("other servers: %v", err)
+		return
+	}
+	var wg sync.WaitGroup
+	for _, srv := range servers {
+		if srv.ID == primaryID {
+			continue
+		}
+		wg.Add(1)
+		go func(srv plextv.Server) {
+			defer wg.Done()
+			cn, err := plextv.Connect(ctx, srv, plextv.Probe(srv.AccessToken, cfg.ClientID))
+			if err != nil {
+				log.Printf("server %s: %v", srv.Name, err)
+				return
+			}
+			c := plex.New(cn.URI, srv.AccessToken, cfg.ClientID)
+			c.SetServer(srv.ID, srv.Name)
+			c.SetConnection(cn.Local, cn.Relay, relayCap)
+			c.SetRemoteBitrate(cfg.RemoteBitrate)
+			if _, err := c.MusicSection(ctx); err != nil {
+				log.Printf("server %s: %v", srv.Name, err)
+				return
+			}
+			lib.Add(multi.Server{ID: srv.ID, Name: srv.Name, Owned: srv.Owned, Via: strings.Trim(where(cn), " ()")}, c)
+			log.Printf("server: %s via %s%s", srv.Name, cn.URI, where(cn))
+		}(srv)
+	}
+	wg.Wait()
+}
+
 // resolveServer returns the server URL and token to use: the manual pair when
 // set, otherwise the account's server through the best connection, falling
 // back to the last connection that worked when plex.tv cannot be reached.
 func resolveServer(ctx context.Context, cfg *config.Config) (name, url string, cn plextv.Connection, err error) {
 	if cfg.Manual() {
-		return "configured server", cfg.Server, plextv.Connection{URI: cfg.Server}, nil
+		return "configured server", cfg.Server, plextv.Connection{URI: cfg.Server, ServerID: "manual"}, nil
 	}
 	if cfg.AccountToken == "" {
 		return "", "", plextv.Connection{}, errors.New("not signed in; run `dotamp login`")
@@ -147,7 +222,7 @@ func resolveServer(ctx context.Context, cfg *config.Config) (name, url string, c
 	if err != nil {
 		if cfg.LastServer != "" {
 			log.Printf("plex.tv unreachable (%v); using the last server %s", err, cfg.LastServer)
-			return "last known server", cfg.LastServer, plextv.Connection{URI: cfg.LastServer}, nil
+			return "last known server", cfg.LastServer, plextv.Connection{URI: cfg.LastServer, ServerID: cfg.LastServerID}, nil
 		}
 		return "", "", plextv.Connection{}, err
 	}
@@ -163,11 +238,12 @@ func resolveServer(ctx context.Context, cfg *config.Config) (name, url string, c
 	if err != nil {
 		if cfg.LastServer != "" {
 			log.Printf("%v; using the last server %s", err, cfg.LastServer)
-			return "last known server", cfg.LastServer, plextv.Connection{URI: cfg.LastServer}, nil
+			return "last known server", cfg.LastServer, plextv.Connection{URI: cfg.LastServer, ServerID: cfg.LastServerID}, nil
 		}
 		return "", "", plextv.Connection{}, err
 	}
-	cfg.LastServer, cfg.LastToken = cn.URI, srv.AccessToken
+	cn.ServerID = srv.ID
+	cfg.LastServer, cfg.LastToken, cfg.LastServerID = cn.URI, srv.AccessToken, srv.ID
 	return srv.Name, cn.URI, cn, nil
 }
 
@@ -212,16 +288,30 @@ func run(debugLog bool) (err error) {
 	}
 	log.Printf("server: %s via %s%s", serverName, serverURL, where(cn))
 
-	lib := plex.New(serverURL, token, cfg.ClientID)
+	relayCap := 1000 // kbps the relay carries for a free account
+	if !cfg.Manual() {
+		if sub, err := plexTV(cfg.ClientID).Subscribed(ctx, cfg.AccountToken); err == nil && sub {
+			relayCap = 2000
+		}
+	}
+	primary := plex.New(serverURL, token, cfg.ClientID)
+	primary.SetServer(cn.ServerID, serverName)
+	primary.SetConnection(cn.Local || !cn.Discovered, cn.Relay, relayCap)
+	primary.SetRemoteBitrate(cfg.RemoteBitrate)
 	if cfg.Section != "" {
-		lib.SetSection(cfg.Section)
+		primary.SetSection(cfg.Section)
 	} else {
-		id, err := lib.MusicSection(ctx)
+		id, err := primary.MusicSection(ctx)
 		if err != nil {
 			return fmt.Errorf("plex at %s: %w", serverURL, err)
 		}
 		cfg.Section = id
 		_ = config.Save(cfg)
+	}
+	lib := multi.New()
+	lib.Add(multi.Server{ID: cn.ServerID, Name: serverName, Owned: true, Via: strings.Trim(where(cn), " ()")}, primary)
+	if !cfg.Manual() {
+		go connectOthers(ctx, cfg, cn.ServerID, relayCap, lib)
 	}
 
 	out, err := audio.NewOtoOutput(audio.OutRate)
@@ -246,6 +336,7 @@ func run(debugLog bool) (err error) {
 		cfg.Volume = v
 		_ = config.Save(cfg)
 	})
+	app.SetSwitcher(lib)
 	// A panic on either goroutine must restore the terminal before it reaches
 	// the user; the message points at the log. The decode goroutine recovers
 	// its own panics inside the engine.

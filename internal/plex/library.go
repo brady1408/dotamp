@@ -37,15 +37,15 @@ func (c *Client) Search(ctx context.Context, query string) (library.SearchResult
 		switch h.Type {
 		case "artist":
 			for _, m := range h.Metadata {
-				res.Artists = append(res.Artists, library.Artist{ID: m.RatingKey, Name: m.Title})
+				res.Artists = append(res.Artists, library.Artist{ID: m.RatingKey, Name: m.Title, Server: c.serverID})
 			}
 		case "album":
 			for _, m := range h.Metadata {
-				res.Albums = append(res.Albums, toAlbum(m))
+				res.Albums = append(res.Albums, c.toAlbum(m))
 			}
 		case "track":
 			for _, m := range h.Metadata {
-				res.Tracks = append(res.Tracks, toTrack(m))
+				res.Tracks = append(res.Tracks, c.toTrack(m))
 			}
 		}
 	}
@@ -64,7 +64,7 @@ func (c *Client) RecentAlbums(ctx context.Context, offset, limit int) ([]library
 	}
 	albums := make([]library.Album, 0, len(out.MediaContainer.Metadata))
 	for _, m := range out.MediaContainer.Metadata {
-		albums = append(albums, toAlbum(m))
+		albums = append(albums, c.toAlbum(m))
 	}
 	return albums, nil
 }
@@ -76,7 +76,7 @@ func (c *Client) AlbumTracks(ctx context.Context, albumID string) ([]library.Tra
 	}
 	tracks := make([]library.Track, 0, len(out.MediaContainer.Metadata))
 	for _, m := range out.MediaContainer.Metadata {
-		tracks = append(tracks, toTrack(m))
+		tracks = append(tracks, c.toTrack(m))
 	}
 	return tracks, nil
 }
@@ -88,7 +88,7 @@ func (c *Client) ArtistAlbums(ctx context.Context, artistID string) ([]library.A
 	}
 	albums := make([]library.Album, 0, len(out.MediaContainer.Metadata))
 	for _, m := range out.MediaContainer.Metadata {
-		albums = append(albums, toAlbum(m))
+		albums = append(albums, c.toAlbum(m))
 	}
 	return albums, nil
 }
@@ -105,7 +105,7 @@ func (c *Client) Artists(ctx context.Context, offset, limit int) ([]library.Arti
 	}
 	artists := make([]library.Artist, 0, len(out.MediaContainer.Metadata))
 	for _, m := range out.MediaContainer.Metadata {
-		artists = append(artists, library.Artist{ID: m.RatingKey, Name: m.Title})
+		artists = append(artists, library.Artist{ID: m.RatingKey, Name: m.Title, Server: c.serverID})
 	}
 	return artists, out.MediaContainer.TotalSize, nil
 }
@@ -125,28 +125,50 @@ func (c *Client) ArtistIndex(ctx context.Context) ([]library.Letter, error) {
 // Stream never puts the token in the URL: it rides in StreamHeaders, so a
 // logged or displayed URL cannot leak it.
 func (c *Client) Stream(ctx context.Context, t library.Track) (library.Stream, error) {
-	switch t.Codec {
-	case "flac", "mp3":
-		if t.PartKey == "" {
-			return library.Stream{}, errors.New("plex: track has no part key")
+	bitrate := c.transcodeBitrate(t)
+	if bitrate == 0 {
+		switch t.Codec {
+		case "flac", "mp3":
+			if t.PartKey == "" {
+				return library.Stream{}, errors.New("plex: track has no part key")
+			}
+			return library.Stream{URL: c.server + t.PartKey, Codec: t.Codec, Headers: c.StreamHeaders()}, nil
 		}
-		return library.Stream{URL: c.server + t.PartKey, Codec: t.Codec, Headers: c.StreamHeaders()}, nil
+		bitrate = 320 // a codec we cannot decode: let the server transcode at full quality
 	}
 	q := url.Values{
 		"path": {"/library/metadata/" + t.ID}, "mediaIndex": {"0"}, "partIndex": {"0"},
-		"protocol": {"http"},
+		"protocol": {"http"}, "audioCodec": {"mp3"}, "musicBitrate": {strconv.Itoa(bitrate)},
 	}
 	return library.Stream{URL: c.server + "/music/:/transcode/universal/start.mp3?" + q.Encode(), Codec: "mp3", Headers: c.StreamHeaders()}, nil
 }
 
-func toAlbum(m metadata) library.Album {
-	return library.Album{ID: m.RatingKey, Title: m.Title, Artist: m.ParentTitle, ArtistID: m.ParentRatingKey,
-		Year: m.Year, TrackCount: m.LeafCount, AddedAt: m.AddedAt}
+// transcodeBitrate decides whether the original file can be sent as is. It
+// returns 0 for the original, or the kbps to transcode to: a forced remote
+// bitrate on any non-local connection, or 320 when a relay's cap cannot
+// carry the file with a fifth of headroom.
+func (c *Client) transcodeBitrate(t library.Track) int {
+	if c.local {
+		return 0
+	}
+	if c.remoteBitrate > 0 {
+		return c.remoteBitrate
+	}
+	if c.relay && c.relayCap > 0 && t.Bitrate > c.relayCap*4/5 {
+		return min(320, c.relayCap*4/5)
+	}
+	return 0
 }
 
-func toTrack(m metadata) library.Track {
+func (c *Client) toAlbum(m metadata) library.Album {
+	return library.Album{ID: m.RatingKey, Title: m.Title, Artist: m.ParentTitle, ArtistID: m.ParentRatingKey,
+		Year: m.Year, TrackCount: m.LeafCount, AddedAt: m.AddedAt, Server: c.serverID}
+}
+
+func (c *Client) toTrack(m metadata) library.Track {
 	t := library.Track{ID: m.RatingKey, Title: m.Title, Index: m.Index, Album: m.ParentTitle,
-		AlbumID: m.ParentRatingKey, Artist: m.GrandparentTitle, Duration: time.Duration(m.Duration) * time.Millisecond}
+		AlbumID: m.ParentRatingKey, Artist: m.GrandparentTitle, Duration: time.Duration(m.Duration) * time.Millisecond,
+		Server: c.serverID}
 	if len(m.Media) > 0 {
 		md := m.Media[0]
 		t.Codec, t.Container, t.Bitrate = md.AudioCodec, md.Container, md.Bitrate

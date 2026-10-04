@@ -18,10 +18,12 @@ type Config struct {
 	Section  string  `json:"section,omitempty"`
 	Volume   float64 `json:"volume"`
 
-	AccountToken string `json:"account_token,omitempty"` // from `dotamp login`
-	ServerName   string `json:"server_name,omitempty"`   // which of the account's servers to use; first owned when empty
-	LastServer   string `json:"last_server,omitempty"`   // the connection discovery chose last time, for starts without plex.tv
-	LastToken    string `json:"last_token,omitempty"`
+	AccountToken  string `json:"account_token,omitempty"` // from `dotamp login`
+	ServerName    string `json:"server_name,omitempty"`   // which of the account's servers to use; first owned when empty
+	LastServer    string `json:"last_server,omitempty"`   // the connection discovery chose last time, for starts without plex.tv
+	LastToken     string `json:"last_token,omitempty"`
+	LastServerID  string `json:"last_server_id,omitempty"`
+	RemoteBitrate int    `json:"remote_bitrate,omitempty"` // kbps to transcode to on any non-local connection; 0 = original
 }
 
 // Manual reports whether a hand-written server and token are set.

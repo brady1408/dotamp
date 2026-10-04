@@ -21,6 +21,11 @@ type Client struct {
 	clientID string
 	section  string
 	http     *http.Client
+
+	serverID, serverName string // tag on every item, for multi-server routing
+	local, relay         bool   // how the connection to this server was reached
+	relayCap             int    // kbps the relay can carry; 0 = unknown
+	remoteBitrate        int    // kbps to transcode to on any non-local connection; 0 = original
 }
 
 func New(server, token, clientID string) *Client {
@@ -33,6 +38,18 @@ func New(server, token, clientID string) *Client {
 }
 
 func (c *Client) SetSection(id string) { c.section = id }
+
+// SetServer names the server these items come from.
+func (c *Client) SetServer(id, name string) { c.serverID, c.serverName = id, name }
+
+// SetConnection records how the server was reached. A relay carries at most
+// relayCap kbps, so files above it are transcoded.
+func (c *Client) SetConnection(local, relay bool, relayCap int) {
+	c.local, c.relay, c.relayCap = local, relay, relayCap
+}
+
+// SetRemoteBitrate forces transcoding to kbps on any non-local connection.
+func (c *Client) SetRemoteBitrate(kbps int) { c.remoteBitrate = kbps }
 
 func (c *Client) headers(h http.Header) {
 	h.Set("X-Plex-Token", c.token)
