@@ -21,6 +21,7 @@ type SpectrumSource interface {
 }
 
 type Analyzer struct {
+	mode    Mode
 	src     SpectrumSource
 	window  []float64
 	samples []float64
@@ -39,6 +40,10 @@ func NewAnalyzer(src SpectrumSource) *Analyzer {
 		smooth:  dsp.NewSmoother(0, decay, capHold, capFall),
 	}
 }
+
+func (a *Analyzer) Mode() Mode     { return a.mode }
+func (a *Analyzer) SetMode(m Mode) { a.mode = m }
+func (a *Analyzer) NextMode() Mode { a.mode = (a.mode + 1) % Mode(len(modeNames)); return a.mode }
 
 func (a *Analyzer) resize(w, h int) {
 	if a.cv != nil && a.cv.W == w && a.cv.H == h {
@@ -65,16 +70,23 @@ func (a *Analyzer) Update(w, h int) {
 		for i := range a.levels {
 			a.levels[i] = 0
 		}
+		for i := range a.samples {
+			a.samples[i] = 0
+		}
 	}
 	a.smooth.Update(a.levels)
 }
 
-// Draw paints the smoother's current state.
+// Draw paints the current mode's view of the last Update.
 func (a *Analyzer) Draw(s tcell.Screen, r Rect) {
 	if r.W <= 0 || r.H <= 0 {
 		return
 	}
 	a.resize(r.W, r.H)
+	if a.mode == ModeScope {
+		a.drawScope(s, r)
+		return
+	}
 	a.cv.Clear()
 	dotH := a.cv.DotH()
 	for i := 0; i < a.nbars; i++ {
@@ -92,6 +104,11 @@ func (a *Analyzer) Draw(s tcell.Screen, r Rect) {
 			a.cv.Set(x+1, y, c)
 		}
 	}
+	a.paint(s, r)
+}
+
+// paint copies the canvas to the screen.
+func (a *Analyzer) paint(s tcell.Screen, r Rect) {
 	for cy := 0; cy < r.H; cy++ {
 		for cx := 0; cx < r.W; cx++ {
 			ru, col := a.cv.Cell(cx, cy)

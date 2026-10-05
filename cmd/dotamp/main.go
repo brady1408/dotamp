@@ -337,6 +337,11 @@ func run(debugLog bool) (err error) {
 		_ = config.Save(cfg)
 	})
 	app.SetSwitcher(lib)
+	app.SetVisual(cfg.Visual)
+	app.OnVisual = func(name string) {
+		cfg.Visual = name
+		_ = config.Save(cfg)
+	}
 	// A panic on either goroutine must restore the terminal before it reaches
 	// the user; the message points at the log. The decode goroutine recovers
 	// its own panics inside the engine.

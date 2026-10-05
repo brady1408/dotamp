@@ -27,6 +27,7 @@ const (
 	ActPageUp
 	ActPageDown
 	ActEscape
+	ActVisual
 )
 
 func ActionFor(ev *tcell.EventKey) Action {
@@ -75,6 +76,8 @@ func ActionFor(ev *tcell.EventKey) Action {
 			return ActRepeat
 		case '?':
 			return ActHelp
+		case 'v':
+			return ActVisual
 		case 'j':
 			return ActDown
 		case 'k':

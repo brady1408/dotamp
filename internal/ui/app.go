@@ -37,6 +37,16 @@ type App struct {
 
 	lastClick    time.Time
 	lastClickRow int
+
+	// OnVisual is told the new mode's name when v changes it, to persist it.
+	OnVisual func(name string)
+}
+
+// SetVisual selects the analyzer mode by its saved name; unknown names are ignored.
+func (a *App) SetVisual(name string) {
+	if m, ok := ParseMode(name); ok {
+		a.an.SetMode(m)
+	}
 }
 
 const doubleClick = 400 * time.Millisecond
@@ -151,6 +161,11 @@ func (a *App) key(ev *tcell.EventKey) bool {
 		return true
 	case ActHelp:
 		a.help = true
+	case ActVisual:
+		m := a.an.NextMode()
+		if a.OnVisual != nil {
+			a.OnVisual(m.String())
+		}
 	case ActTogglePause:
 		a.ctrl.TogglePause()
 	case ActNext:

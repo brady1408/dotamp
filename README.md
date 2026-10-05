@@ -41,6 +41,7 @@ Run `dotamp`. The deck on top shows the track, format, clock and seek bar. The a
 | Backspace | back |
 | `A`–`Z`, `#` | jump to a letter in the artist index |
 | `s` / `r` | shuffle / repeat |
+| `v` | spectrum analyzer / oscilloscope |
 | `?` | help |
 | `q` | quit |
 
