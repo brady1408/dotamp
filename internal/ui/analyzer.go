@@ -30,6 +30,7 @@ type Analyzer struct {
 	levels  []float64
 	smooth  *dsp.Smoother
 	cv      *canvas.Braille
+	sg      spectrogram
 }
 
 func NewAnalyzer(src SpectrumSource) *Analyzer {
@@ -63,8 +64,9 @@ func (a *Analyzer) Update(w, h int) {
 		return
 	}
 	a.resize(w, h)
+	var mag []float64
 	if n := a.src.Spectrum(fftN, a.samples); n == fftN {
-		mag := dsp.Magnitudes(a.samples, a.window)
+		mag = dsp.Magnitudes(a.samples, a.window)
 		a.bands.Levels(mag, a.levels)
 	} else {
 		for i := range a.levels {
@@ -75,6 +77,10 @@ func (a *Analyzer) Update(w, h int) {
 		}
 	}
 	a.smooth.Update(a.levels)
+	if a.mode == ModeSpectrogram {
+		a.sg.resize(w, h)
+		a.sg.update(mag)
+	}
 }
 
 // Draw paints the current mode's view of the last Update.
@@ -83,8 +89,13 @@ func (a *Analyzer) Draw(s tcell.Screen, r Rect) {
 		return
 	}
 	a.resize(r.W, r.H)
-	if a.mode == ModeScope {
+	switch a.mode {
+	case ModeScope:
 		a.drawScope(s, r)
+		return
+	case ModeSpectrogram:
+		a.sg.resize(r.W, r.H)
+		a.sg.draw(s, r)
 		return
 	}
 	a.cv.Clear()

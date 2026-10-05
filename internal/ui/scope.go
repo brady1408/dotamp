@@ -8,11 +8,12 @@ import (
 type Mode int
 
 const (
-	ModeBars  Mode = iota // the spectrum analyzer
-	ModeScope             // the oscilloscope
+	ModeBars        Mode = iota // the spectrum analyzer
+	ModeScope                   // the oscilloscope
+	ModeSpectrogram             // the waterfall
 )
 
-var modeNames = map[Mode]string{ModeBars: "bars", ModeScope: "scope"}
+var modeNames = map[Mode]string{ModeBars: "bars", ModeScope: "scope", ModeSpectrogram: "spectrogram"}
 
 func (m Mode) String() string { return modeNames[m] }
 
