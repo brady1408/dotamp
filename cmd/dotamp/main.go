@@ -161,9 +161,13 @@ func listServers() error {
 		if !srv.Owned {
 			owner = "shared"
 		}
-		cn, err := plextv.Connect(ctx, srv, plextv.Probe(srv.AccessToken, cfg.ClientID))
+		probe := plextv.Probe(srv.AccessToken, cfg.ClientID)
+		cn, err := plextv.Connect(ctx, srv, probe)
 		if err != nil {
-			fmt.Printf("%-24s %-6s unreachable (%d connections tried)\n", srv.Name, owner, len(srv.Connections))
+			fmt.Printf("%-24s %-6s unreachable; every connection tried:\n", srv.Name, owner)
+			for _, o := range plextv.Diagnose(ctx, srv, probe) {
+				fmt.Printf("    %-72s %s  %v\n", o.URI, strings.Trim(where(o.Connection), " ()"), o.Err)
+			}
 			continue
 		}
 		c := plex.New(cn.URI, srv.AccessToken, cfg.ClientID)

@@ -202,3 +202,17 @@ func TestSubscribed(t *testing.T) {
 		t.Fatal("expected an error")
 	}
 }
+
+func TestDiagnoseReportsEveryConnection(t *testing.T) {
+	srv := Server{Name: "x", Connections: []Connection{{URI: "a", Local: true}, {URI: "b"}, {URI: "c", Relay: true}}}
+	probe := func(_ context.Context, cn Connection) error {
+		if cn.URI == "b" {
+			return nil
+		}
+		return errors.New("nope")
+	}
+	out := Diagnose(context.Background(), srv, probe)
+	if len(out) != 3 || out[0].Err == nil || out[1].Err != nil || out[2].Err == nil || out[1].URI != "b" {
+		t.Fatalf("outcomes = %+v", out)
+	}
+}

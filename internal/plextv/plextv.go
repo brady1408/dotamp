@@ -271,6 +271,27 @@ func Connect(ctx context.Context, s Server, probe func(context.Context, Connecti
 	return Connection{}, fmt.Errorf("plex.tv: no connection to %s answered", s.Name)
 }
 
+// Diagnose probes every connection of a server in parallel and reports the
+// outcome of each, for a user to read when nothing answered.
+type Outcome struct {
+	Connection
+	Err error // nil when the connection answered
+}
+
+func Diagnose(ctx context.Context, s Server, probe func(context.Context, Connection) error) []Outcome {
+	out := make([]Outcome, len(s.Connections))
+	var wg sync.WaitGroup
+	for i, cn := range s.Connections {
+		wg.Add(1)
+		go func(i int, cn Connection) {
+			defer wg.Done()
+			out[i] = Outcome{Connection: cn, Err: probe(ctx, cn)}
+		}(i, cn)
+	}
+	wg.Wait()
+	return out
+}
+
 // firstReachable probes a tier in parallel and returns the earliest listed
 // connection that answered.
 func firstReachable(ctx context.Context, tier []Connection, probe func(context.Context, Connection) error) (Connection, bool) {
