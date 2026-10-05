@@ -108,3 +108,27 @@ func TestVKeyCyclesModesAndReportsIt(t *testing.T) {
 		t.Fatal("an unknown name must leave the mode alone")
 	}
 }
+
+func TestScopeFillsAWideWindow(t *testing.T) {
+	const w = 320 // 640 dots × 4 samples = 2560 samples, more than the FFT buffer holds
+	s := sim(t, w, 8)
+	a := NewAnalyzer(sineSpectrum{hz: 440})
+	a.SetMode(ModeScope)
+	a.Update(w, 8)
+	a.Draw(s, Rect{0, 0, w, 8})
+	s.Show()
+	cells, cw, ch := s.GetContents()
+	// The rightmost 40 columns must still swing to the top and bottom rows.
+	top, bottom := 0, 0
+	for x := cw - 40; x < cw; x++ {
+		if r := cells[0*cw+x].Runes; len(r) == 1 && r[0] > 0x2800 {
+			top++
+		}
+		if r := cells[(ch-1)*cw+x].Runes; len(r) == 1 && r[0] > 0x2800 {
+			bottom++
+		}
+	}
+	if top == 0 || bottom == 0 {
+		t.Fatalf("right edge is flat: top=%d bottom=%d lit cells in the last 40 columns", top, bottom)
+	}
+}

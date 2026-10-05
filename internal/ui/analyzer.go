@@ -34,6 +34,7 @@ type Analyzer struct {
 	sg      spectrogram
 	left    []float64 // the stereo field's window
 	right   []float64
+	trace   []float64 // the scope's window: as many samples as the width needs, plus room to find a trigger
 }
 
 func NewAnalyzer(src SpectrumSource) *Analyzer {
@@ -81,6 +82,16 @@ func (a *Analyzer) Update(w, h int) {
 	}
 	a.smooth.Update(a.levels)
 	switch a.mode {
+	case ModeScope:
+		need := w*2*scopeSamplesPerDot + scopeTriggerSearch
+		if len(a.trace) != need {
+			a.trace = make([]float64, need)
+		}
+		if n := a.src.Spectrum(need, a.trace); n != need {
+			for i := range a.trace {
+				a.trace[i] = 0
+			}
+		}
 	case ModeSpectrogram:
 		a.sg.resize(w, h)
 		a.sg.update(mag)

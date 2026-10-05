@@ -28,22 +28,27 @@ func ParseMode(name string) (Mode, bool) {
 	return ModeBars, false
 }
 
-const scopeSamplesPerDot = 4 // 80 columns show about 15 ms at 44.1 kHz
+const (
+	scopeSamplesPerDot = 4   // 80 columns show about 15 ms at 44.1 kHz
+	scopeTriggerSearch = 512 // samples ahead of the window in which a trigger is looked for
+)
 
 // scopeTrace returns one vertical dot position per horizontal dot: the most
 // recent window of the tap, started at a rising zero crossing so a steady
-// tone holds still on screen instead of jittering with every tick.
+// tone holds still on screen instead of jittering with every tick. The
+// window is a.trace, sized by Update for this width.
 func (a *Analyzer) scopeTrace(dotW int) []int {
 	dotH := a.cv.DotH()
 	centre := dotH / 2
 	swing := float64(centre - 1)
 	window := dotW * scopeSamplesPerDot
-	if window > len(a.samples) {
-		window = len(a.samples)
+	src := a.trace
+	if len(src) < window+1 { // not sampled at this width yet
+		src = make([]float64, window+1)
 	}
 	start := 0
-	for i := 1; i+window <= len(a.samples); i++ {
-		if a.samples[i-1] < 0 && a.samples[i] >= 0 {
+	for i := 1; i+window <= len(src); i++ {
+		if src[i-1] < 0 && src[i] >= 0 {
 			start = i
 			break
 		}
@@ -51,10 +56,10 @@ func (a *Analyzer) scopeTrace(dotW int) []int {
 	trace := make([]int, dotW)
 	for x := range trace {
 		i := start + x*scopeSamplesPerDot
-		if i >= len(a.samples) {
-			i = len(a.samples) - 1
+		if i >= len(src) {
+			i = len(src) - 1
 		}
-		v := a.samples[i]
+		v := src[i]
 		if v > 1 {
 			v = 1
 		} else if v < -1 {
