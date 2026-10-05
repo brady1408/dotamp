@@ -194,6 +194,10 @@ func TestSubscribed(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
+	u, err := c.User(context.Background(), "account-token")
+	if err != nil || u.Username != "brady" || !u.Subscribed {
+		t.Fatalf("user=%+v err=%v", u, err)
+	}
 	if _, err := c.Subscribed(context.Background(), "bad"); err == nil {
 		t.Fatal("expected an error")
 	}

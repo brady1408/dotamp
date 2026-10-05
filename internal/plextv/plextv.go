@@ -120,18 +120,29 @@ func (c *Client) PollPin(ctx context.Context, p Pin, every time.Duration) (strin
 	}
 }
 
-// Subscribed reports whether the account has an active Plex Pass, which
-// decides how much the relay will carry.
-func (c *Client) Subscribed(ctx context.Context, token string) (bool, error) {
+// User is the signed-in account.
+type User struct {
+	Username   string
+	Subscribed bool // an active Plex Pass, which decides how much the relay carries
+}
+
+func (c *Client) User(ctx context.Context, token string) (User, error) {
 	var u struct {
+		Username     string `json:"username"`
 		Subscription struct {
 			Active bool `json:"active"`
 		} `json:"subscription"`
 	}
 	if err := c.do(ctx, http.MethodGet, "/api/v2/user", token, &u); err != nil {
-		return false, err
+		return User{}, err
 	}
-	return u.Subscription.Active, nil
+	return User{Username: u.Username, Subscribed: u.Subscription.Active}, nil
+}
+
+// Subscribed reports whether the account has an active Plex Pass.
+func (c *Client) Subscribed(ctx context.Context, token string) (bool, error) {
+	u, err := c.User(ctx, token)
+	return u.Subscribed, err
 }
 
 // Server is a media server the account can reach, with every way to reach it.

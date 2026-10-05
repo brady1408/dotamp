@@ -35,6 +35,9 @@ func main() {
 		fmt.Println("dotamp", version)
 		return
 	}
+	if *debugLog {
+		netlog.Enabled.Store(true) // the player redirects the log to a file; commands keep stderr
+	}
 	var err error
 	switch flag.Arg(0) {
 	case "login":
@@ -135,9 +138,23 @@ func listServers() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	servers, err := plexTV(cfg.ClientID).Servers(ctx, cfg.AccountToken)
+	tv := plexTV(cfg.ClientID)
+	if u, err := tv.User(ctx, cfg.AccountToken); err == nil {
+		pass := ""
+		if u.Subscribed {
+			pass = ", Plex Pass"
+		}
+		fmt.Printf("Signed in as %s%s\n", u.Username, pass)
+	} else {
+		return fmt.Errorf("account token rejected (%v); run `dotamp login`", err)
+	}
+	servers, err := tv.Servers(ctx, cfg.AccountToken)
 	if err != nil {
 		return err
+	}
+	if len(servers) == 0 {
+		fmt.Println("plex.tv lists no servers for this account. Is this the account that owns your server, or has it been shared with you?")
+		return nil
 	}
 	for _, srv := range servers {
 		owner := "owned"
@@ -225,6 +242,9 @@ func resolveServer(ctx context.Context, cfg *config.Config) (name, url string, c
 			return "last known server", cfg.LastServer, plextv.Connection{URI: cfg.LastServer, ServerID: cfg.LastServerID}, nil
 		}
 		return "", "", plextv.Connection{}, err
+	}
+	if len(servers) == 0 {
+		return "", "", plextv.Connection{}, errors.New("plex.tv lists no servers for this account; run `dotamp servers` to see which account is signed in")
 	}
 	srv := plextv.ChooseServer(servers, cfg.ServerName)
 	if srv == nil {

@@ -55,6 +55,9 @@ func fakePlex(t *testing.T) *httptest.Server {
 			"connections": []map[string]any{{"uri": s.URL, "local": true, "relay": false}},
 		}})
 	})
+	mux.HandleFunc("GET /api/v2/user", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"username":"tester","subscription":{"active":false}}`))
+	})
 	mux.HandleFunc("GET /identity", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Plex-Token") != "srv-token" {
 			http.Error(w, "unauthorized", 401)
@@ -111,5 +114,8 @@ func TestServersCommandListsReachability(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "testbox") || !strings.Contains(string(out), "local") || !strings.Contains(string(out), plex.URL) {
 		t.Fatalf("servers output:\n%s", out)
+	}
+	if !strings.Contains(string(out), "Signed in as tester") {
+		t.Fatalf("servers output should name the account:\n%s", out)
 	}
 }
