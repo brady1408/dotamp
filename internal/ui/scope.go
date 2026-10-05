@@ -11,9 +11,10 @@ const (
 	ModeBars        Mode = iota // the spectrum analyzer
 	ModeScope                   // the oscilloscope
 	ModeSpectrogram             // the waterfall
+	ModeStereo                  // the stereo field
 )
 
-var modeNames = map[Mode]string{ModeBars: "bars", ModeScope: "scope", ModeSpectrogram: "spectrogram"}
+var modeNames = map[Mode]string{ModeBars: "bars", ModeScope: "scope", ModeSpectrogram: "spectrogram", ModeStereo: "stereo"}
 
 func (m Mode) String() string { return modeNames[m] }
 

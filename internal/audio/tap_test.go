@@ -37,3 +37,21 @@ func TestTapMonoMix(t *testing.T) {
 		t.Fatalf("mono mix = %v", dst)
 	}
 }
+
+func TestTapKeepsStereo(t *testing.T) {
+	tap := NewTap(8)
+	tap.Write([]float32{1, 0, 0.5, -0.5, 0, 1})
+	l := make([]float64, 3)
+	r := make([]float64, 3)
+	if n := tap.LatestStereo(3, 0, l, r); n != 3 {
+		t.Fatalf("n = %d", n)
+	}
+	if l[0] != 1 || r[0] != 0 || l[1] != 0.5 || r[1] != -0.5 || l[2] != 0 || r[2] != 1 {
+		t.Fatalf("l=%v r=%v", l, r)
+	}
+	mono := make([]float64, 3)
+	tap.Latest(3, 0, mono)
+	if mono[0] != 0.5 || mono[1] != 0 || mono[2] != 0.5 {
+		t.Fatalf("mono mix = %v", mono)
+	}
+}

@@ -14,7 +14,7 @@ var helpLines = []string{
 	"Backspace  back (Library)",
 	"A-Z / #    jump to letter (Artists)",
 	"s / r      shuffle / repeat",
-	"v          bars / oscilloscope / spectrogram",
+	"v          bars / scope / spectrogram / stereo",
 	"?          this help",
 	"q          quit",
 }

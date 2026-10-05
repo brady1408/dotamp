@@ -455,6 +455,11 @@ func (e *Engine) Spectrum(n int, dst []float64) int {
 	return e.tap.Latest(n, e.player.BufferedSize()/4, dst)
 }
 
+// Stereo is Spectrum with left and right kept apart.
+func (e *Engine) Stereo(n int, l, r []float64) int {
+	return e.tap.LatestStereo(n, e.player.BufferedSize()/4, l, r)
+}
+
 // reader is what the output pulls from: s16le stereo, never short, silence when
 // the ring is empty. It applies volume, feeds the tap, and performs handovers.
 type reader struct {

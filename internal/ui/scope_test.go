@@ -92,7 +92,11 @@ func TestVKeyCyclesModesAndReportsIt(t *testing.T) {
 		t.Fatalf("mode=%v saved=%v", app.an.Mode(), saved)
 	}
 	key(app, tcell.KeyRune, 'v')
-	if app.an.Mode() != ModeBars || saved[2] != "bars" {
+	if app.an.Mode() != ModeStereo || saved[2] != "stereo" {
+		t.Fatalf("mode=%v saved=%v", app.an.Mode(), saved)
+	}
+	key(app, tcell.KeyRune, 'v')
+	if app.an.Mode() != ModeBars || saved[3] != "bars" {
 		t.Fatalf("mode=%v saved=%v", app.an.Mode(), saved)
 	}
 	app.SetVisual("scope")

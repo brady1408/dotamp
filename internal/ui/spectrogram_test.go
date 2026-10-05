@@ -87,13 +87,14 @@ func TestSpectrogramScrollsWithNewestOnTheRight(t *testing.T) {
 	}
 }
 
-func TestVCyclesThroughAllThreeViews(t *testing.T) {
+func TestVCyclesThroughAllViews(t *testing.T) {
 	app, _, _ := newApp(t)
 	key(app, tcell.KeyRune, 'v')
 	key(app, tcell.KeyRune, 'v')
 	if app.an.Mode() != ModeSpectrogram {
 		t.Fatalf("mode = %v", app.an.Mode())
 	}
+	key(app, tcell.KeyRune, 'v')
 	key(app, tcell.KeyRune, 'v')
 	if app.an.Mode() != ModeBars {
 		t.Fatalf("mode = %v", app.an.Mode())

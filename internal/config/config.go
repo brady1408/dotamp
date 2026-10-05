@@ -24,7 +24,7 @@ type Config struct {
 	LastToken     string `json:"last_token,omitempty"`
 	LastServerID  string `json:"last_server_id,omitempty"`
 	RemoteBitrate int    `json:"remote_bitrate,omitempty"` // kbps to transcode to on any non-local connection; 0 = original
-	Visual        string `json:"visual,omitempty"`         // analyzer mode: "bars", "scope" or "spectrogram"
+	Visual        string `json:"visual,omitempty"`         // analyzer mode: "bars", "scope", "spectrogram" or "stereo"
 }
 
 // Manual reports whether a hand-written server and token are set.

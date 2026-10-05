@@ -17,7 +17,8 @@ const (
 )
 
 type SpectrumSource interface {
-	Spectrum(n int, dst []float64) int
+	Spectrum(n int, dst []float64) int // mono frames at the playhead
+	Stereo(n int, l, r []float64) int  // the same frames, channels apart
 }
 
 type Analyzer struct {
@@ -31,6 +32,8 @@ type Analyzer struct {
 	smooth  *dsp.Smoother
 	cv      *canvas.Braille
 	sg      spectrogram
+	left    []float64 // the stereo field's window
+	right   []float64
 }
 
 func NewAnalyzer(src SpectrumSource) *Analyzer {
@@ -77,9 +80,19 @@ func (a *Analyzer) Update(w, h int) {
 		}
 	}
 	a.smooth.Update(a.levels)
-	if a.mode == ModeSpectrogram {
+	switch a.mode {
+	case ModeSpectrogram:
 		a.sg.resize(w, h)
 		a.sg.update(mag)
+	case ModeStereo:
+		if a.left == nil {
+			a.left, a.right = make([]float64, stereoWindow), make([]float64, stereoWindow)
+		}
+		if n := a.src.Stereo(stereoWindow, a.left, a.right); n != stereoWindow {
+			for i := range a.left {
+				a.left[i], a.right[i] = 0, 0
+			}
+		}
 	}
 }
 
@@ -96,6 +109,9 @@ func (a *Analyzer) Draw(s tcell.Screen, r Rect) {
 	case ModeSpectrogram:
 		a.sg.resize(r.W, r.H)
 		a.sg.draw(s, r)
+		return
+	case ModeStereo:
+		a.drawStereo(s, r)
 		return
 	}
 	a.cv.Clear()

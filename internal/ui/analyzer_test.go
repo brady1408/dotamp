@@ -19,6 +19,13 @@ func (s sineSpectrum) Spectrum(n int, dst []float64) int {
 type silent struct{}
 
 func (silent) Spectrum(n int, dst []float64) int { return 0 }
+func (silent) Stereo(n int, l, r []float64) int  { return 0 }
+
+func (s sineSpectrum) Stereo(n int, l, r []float64) int {
+	s.Spectrum(n, l)
+	copy(r, l)
+	return n
+}
 
 func countBraille(s tcell.SimulationScreen) (lit int, maxColorRed bool) {
 	cells, _, _ := s.GetContents()
