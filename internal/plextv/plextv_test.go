@@ -216,3 +216,45 @@ func TestDiagnoseReportsEveryConnection(t *testing.T) {
 		t.Fatalf("outcomes = %+v", out)
 	}
 }
+
+func TestLocalPlexDirectNamesGetAPlainAddressSibling(t *testing.T) {
+	s, _ := fakePlexTV(t)
+	c := New("cid")
+	c.BaseURL = s.URL
+	servers, _ := c.Servers(context.Background(), "account-token")
+	var uris []string
+	for _, cn := range servers[0].Connections {
+		uris = append(uris, cn.URI)
+	}
+	joined := strings.Join(uris, " ")
+	// The fixture lists https://192-168-1-10.<hash>.plex.direct:32400 as local;
+	// a plain http://192.168.1.10:32400 must be offered beside it, once.
+	if strings.Count(joined, "http://192.168.1.10:32400") != 1 {
+		t.Fatalf("expected one derived plain address, got %v", uris)
+	}
+	// Remote names are left alone: no plain public address is invented.
+	if strings.Contains(joined, "http://203.0.113.7") {
+		t.Fatalf("remote names must not get a plain sibling: %v", uris)
+	}
+	for _, cn := range servers[0].Connections {
+		if cn.URI == "http://192.168.1.10:32400" && (!cn.Local || cn.Relay || !cn.Discovered) {
+			t.Fatalf("derived sibling should be a discovered local connection: %+v", cn)
+		}
+	}
+}
+
+func TestPlainAddressFromPlexDirect(t *testing.T) {
+	cases := map[string]string{
+		"https://192-168-1-10.abc.plex.direct:32400": "http://192.168.1.10:32400",
+		"https://10-0-0-5.abc.plex.direct:32400":     "http://10.0.0.5:32400",
+		"https://172-18-0-1.abc.plex.direct:32400":   "http://172.18.0.1:32400",
+		"https://203-0-113-7.abc.plex.direct:32400":  "", // public: not private, no sibling
+		"https://abc.relay.plex.direct:8443":         "",
+		"http://192.168.1.10:32400":                  "",
+	}
+	for in, want := range cases {
+		if got := plainAddress(in); got != want {
+			t.Errorf("plainAddress(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -175,7 +176,9 @@ type resource struct {
 	} `json:"connections"`
 }
 
-// Servers lists the account's media servers.
+// Servers lists the account's media servers. Beside every local plex.direct
+// name it also offers the plain private address the name encodes, so a
+// resolver that refuses private answers cannot take the LAN path away.
 func (c *Client) Servers(ctx context.Context, token string) ([]Server, error) {
 	var rs []resource
 	if err := c.do(ctx, http.MethodGet, "/api/v2/resources?includeHttps=1&includeRelay=1", token, &rs); err != nil {
@@ -187,12 +190,36 @@ func (c *Client) Servers(ctx context.Context, token string) ([]Server, error) {
 			continue
 		}
 		s := Server{Name: r.Name, ID: r.ClientIdentifier, Owned: r.Owned, AccessToken: r.AccessToken}
+		seen := map[string]bool{}
+		for _, cn := range r.Connections {
+			seen[cn.URI] = true
+		}
 		for _, cn := range r.Connections {
 			s.Connections = append(s.Connections, Connection{URI: cn.URI, Local: cn.Local, Relay: cn.Relay, Discovered: true})
+			if plain := plainAddress(cn.URI); cn.Local && !cn.Relay && plain != "" && !seen[plain] {
+				seen[plain] = true
+				s.Connections = append(s.Connections, Connection{URI: plain, Local: true, Discovered: true})
+			}
 		}
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// plainAddress turns https://192-168-1-10.<hash>.plex.direct:32400 into
+// http://192.168.1.10:32400 when the encoded address is private, and
+// returns "" for anything else.
+func plainAddress(uri string) string {
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme != "https" || !strings.HasSuffix(u.Hostname(), ".plex.direct") {
+		return ""
+	}
+	label, _, _ := strings.Cut(u.Hostname(), ".")
+	ip := net.ParseIP(strings.ReplaceAll(label, "-", "."))
+	if ip == nil || ip.To4() == nil || !ip.IsPrivate() {
+		return ""
+	}
+	return "http://" + ip.String() + ":" + u.Port()
 }
 
 // ChooseServer picks the server named name, or the first owned one when name
