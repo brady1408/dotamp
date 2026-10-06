@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -22,7 +23,10 @@ import (
 	"github.com/brady1408/dotamp/internal/netlog"
 	"github.com/brady1408/dotamp/internal/plex"
 	"github.com/brady1408/dotamp/internal/plextv"
+	"github.com/brady1408/dotamp/internal/subsonic"
 	"github.com/brady1408/dotamp/internal/ui"
+
+	"golang.org/x/term"
 )
 
 var version = "dev"
@@ -44,10 +48,12 @@ func main() {
 		err = login()
 	case "servers":
 		err = listServers()
+	case "navidrome":
+		err = addNavidrome(flag.Arg(1), flag.Arg(2))
 	case "":
 		err = run(*debugLog)
 	default:
-		err = fmt.Errorf("unknown command %q (try: dotamp login)", flag.Arg(0))
+		err = fmt.Errorf("unknown command %q (try: dotamp login, dotamp servers, dotamp navidrome URL USER)", flag.Arg(0))
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "dotamp:", err)
@@ -127,17 +133,89 @@ wait:
 	return nil
 }
 
+// addNavidrome checks a Subsonic server with a password read from the
+// terminal and saves it to the config as a second library.
+func addNavidrome(serverURL, user string) error {
+	if serverURL == "" || user == "" {
+		return errors.New("usage: dotamp navidrome URL USER")
+	}
+	fmt.Printf("Password for %s at %s: ", user, serverURL)
+	var pw []byte
+	var err error
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		pw, err = term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+	} else {
+		line, rerr := bufio.NewReader(os.Stdin).ReadString('\n')
+		pw, err = []byte(strings.TrimRight(line, "\r\n")), nil
+		if rerr != nil && line == "" {
+			err = rerr
+		}
+	}
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	c := subsonic.New(serverURL, user, string(pw))
+	version, err := c.Version(ctx)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load()
+	if errors.Is(err, config.ErrNotFound) || (err != nil && strings.Contains(err.Error(), "dotamp login")) {
+		cfg = config.Config{}
+	} else if err != nil {
+		return err
+	}
+	if cfg.ClientID == "" {
+		cfg.ClientID = config.NewClientID()
+	}
+	if cfg.Volume <= 0 {
+		cfg.Volume = 0.8
+	}
+	cfg.Navidrome = &config.Navidrome{URL: strings.TrimRight(serverURL, "/"), User: user, Password: string(pw)}
+	if err := config.Save(cfg); err != nil {
+		return err
+	}
+	fmt.Printf("Connected to %s (%s). Saved as the Navidrome library.\n", serverURL, version)
+	return nil
+}
+
+// navidromeServer is the multi-server entry for the configured Navidrome.
+func navidromeServer(cfg config.Config) (multi.Server, *subsonic.Client) {
+	c := subsonic.New(cfg.Navidrome.URL, cfg.Navidrome.User, cfg.Navidrome.Password)
+	c.SetServer("navidrome", "Navidrome")
+	c.SetRemoteBitrate(cfg.RemoteBitrate)
+	via := "remote"
+	if c.Local() {
+		via = "local"
+	}
+	return multi.Server{ID: "navidrome", Name: "Navidrome", Owned: true, Via: via}, c
+}
+
 // listServers prints every server on the account and how it can be reached.
 func listServers() error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	if cfg.AccountToken == "" {
-		return errors.New("not signed in; run `dotamp login`")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if cfg.Navidrome != nil {
+		srv, c := navidromeServer(cfg)
+		if v, err := c.Version(ctx); err != nil {
+			fmt.Printf("%-24s %-6s %s unreachable: %v\n", "Navidrome", "owned", cfg.Navidrome.URL, err)
+		} else {
+			fmt.Printf("%-24s %-6s %s (%s)  music library, %s\n", "Navidrome", "owned", cfg.Navidrome.URL, srv.Via, v)
+		}
+	}
+	if cfg.AccountToken == "" {
+		if cfg.Navidrome != nil {
+			return nil
+		}
+		return errors.New("not signed in; run `dotamp login`")
+	}
 	tv := plexTV(cfg.ClientID)
 	if u, err := tv.User(ctx, cfg.AccountToken); err == nil {
 		pass := ""
@@ -301,41 +379,63 @@ func run(debugLog bool) (err error) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	serverName, serverURL, cn, err := resolveServer(ctx, &cfg)
-	if err != nil {
-		return err
-	}
-	token := cfg.Token
-	if !cfg.Manual() {
-		token = cfg.LastToken
-		_ = config.Save(cfg) // remembers the connection that worked
-	}
-	log.Printf("server: %s via %s%s", serverName, serverURL, where(cn))
-
-	relayCap := 1000 // kbps the relay carries for a free account
-	if !cfg.Manual() {
-		if sub, err := plexTV(cfg.ClientID).Subscribed(ctx, cfg.AccountToken); err == nil && sub {
-			relayCap = 2000
-		}
-	}
-	primary := plex.New(serverURL, token, cfg.ClientID)
-	primary.SetServer(cn.ServerID, serverName)
-	primary.SetConnection(cn.Local || !cn.Discovered, cn.Relay, relayCap)
-	primary.SetRemoteBitrate(cfg.RemoteBitrate)
-	if cfg.Section != "" {
-		primary.SetSection(cfg.Section)
-	} else {
-		id, err := primary.MusicSection(ctx)
-		if err != nil {
-			return fmt.Errorf("plex at %s: %w", serverURL, err)
-		}
-		cfg.Section = id
-		_ = config.Save(cfg)
-	}
 	lib := multi.New()
-	lib.Add(multi.Server{ID: cn.ServerID, Name: serverName, Owned: true, Via: strings.Trim(where(cn), " ()")}, primary)
-	if !cfg.Manual() {
-		go connectOthers(ctx, cfg, cn.ServerID, relayCap, lib)
+	hasPlex := cfg.Manual() || cfg.AccountToken != ""
+	if hasPlex {
+		serverName, serverURL, cn, err := resolveServer(ctx, &cfg)
+		if err != nil {
+			return err
+		}
+		token := cfg.Token
+		if !cfg.Manual() {
+			token = cfg.LastToken
+			_ = config.Save(cfg) // remembers the connection that worked
+		}
+		log.Printf("server: %s via %s%s", serverName, serverURL, where(cn))
+
+		relayCap := 1000 // kbps the relay carries for a free account
+		if !cfg.Manual() {
+			if sub, err := plexTV(cfg.ClientID).Subscribed(ctx, cfg.AccountToken); err == nil && sub {
+				relayCap = 2000
+			}
+		}
+		primary := plex.New(serverURL, token, cfg.ClientID)
+		primary.SetServer(cn.ServerID, serverName)
+		primary.SetConnection(cn.Local || !cn.Discovered, cn.Relay, relayCap)
+		primary.SetRemoteBitrate(cfg.RemoteBitrate)
+		if cfg.Section != "" {
+			primary.SetSection(cfg.Section)
+		} else {
+			id, err := primary.MusicSection(ctx)
+			if err != nil {
+				return fmt.Errorf("plex at %s: %w", serverURL, err)
+			}
+			cfg.Section = id
+			_ = config.Save(cfg)
+		}
+		lib.Add(multi.Server{ID: cn.ServerID, Name: serverName, Owned: true, Via: strings.Trim(where(cn), " ()")}, primary)
+		if !cfg.Manual() {
+			go connectOthers(ctx, cfg, cn.ServerID, relayCap, lib)
+		}
+	}
+	if cfg.Navidrome != nil {
+		srv, c := navidromeServer(cfg)
+		add := func() {
+			if err := c.Ping(ctx); err != nil {
+				log.Printf("navidrome %s: %v", cfg.Navidrome.URL, err)
+				return
+			}
+			lib.Add(srv, c)
+			log.Printf("server: Navidrome via %s (%s)", cfg.Navidrome.URL, srv.Via)
+		}
+		if hasPlex {
+			go add() // Plex is the primary; Navidrome joins when it answers
+		} else {
+			add()
+			if len(lib.Servers()) == 0 {
+				return fmt.Errorf("navidrome at %s did not answer; see the log", cfg.Navidrome.URL)
+			}
+		}
 	}
 
 	out, err := audio.NewOtoOutput(audio.OutRate)

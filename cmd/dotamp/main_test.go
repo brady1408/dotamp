@@ -119,3 +119,50 @@ func TestServersCommandListsReachability(t *testing.T) {
 		t.Fatalf("servers output should name the account:\n%s", out)
 	}
 }
+
+func fakeNavidromeServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rest/ping" || r.URL.Query().Get("u") != "brady" || r.URL.Query().Get("t") == "" {
+			_, _ = w.Write([]byte(`{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":40,"message":"Wrong username or password"}}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"0.60.3"}}`))
+	}))
+	t.Cleanup(s.Close)
+	return s
+}
+
+func TestNavidromeCommandPromptsAndSaves(t *testing.T) {
+	bin := build(t)
+	nd := fakeNavidromeServer(t)
+	home := t.TempDir()
+	cmd := exec.Command(bin, "navidrome", nd.URL, "brady")
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+home)
+	cmd.Stdin = strings.NewReader("hunter2\n") // not a terminal: the password is read from stdin
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("navidrome: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "0.60.3") {
+		t.Fatalf("should report the server version it reached:\n%s", out)
+	}
+	b, _ := os.ReadFile(filepath.Join(home, "dotamp", "config.json"))
+	var cfg map[string]any
+	_ = json.Unmarshal(b, &cfg)
+	nav, _ := cfg["navidrome"].(map[string]any)
+	if nav == nil || nav["url"] != nd.URL || nav["user"] != "brady" || nav["password"] != "hunter2" {
+		t.Fatalf("config = %s", b)
+	}
+	// A wrong password is refused and nothing is saved over the good one.
+	bad := exec.Command(bin, "navidrome", nd.URL, "someone")
+	bad.Env = cmd.Env
+	bad.Stdin = strings.NewReader("nope\n")
+	if out, err := bad.CombinedOutput(); err == nil || !strings.Contains(string(out), "Wrong username") {
+		t.Fatalf("expected a refusal: %v\n%s", err, out)
+	}
+	b2, _ := os.ReadFile(filepath.Join(home, "dotamp", "config.json"))
+	if string(b2) != string(b) {
+		t.Fatal("a failed check must not change the config")
+	}
+}

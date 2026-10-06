@@ -24,6 +24,14 @@ It prints a link to approve in your browser. From then on dotamp finds your serv
 
 lists every server on the account and how each one is reached.
 
+## Navidrome
+
+dotamp also speaks the Subsonic API, so a Navidrome (or Airsonic, Gonic, …) library can sit beside Plex or stand alone:
+
+    dotamp navidrome http://192.168.1.20:4533 yourname
+
+It asks for the password once and saves the server as a second library. Search covers both, the Servers entry in the Library menu switches between them, and the queue can mix the two.
+
 ## Use
 
 Run `dotamp`. The deck on top shows the track, format, clock and seek bar. The analyzer takes the middle. The bottom pane is Queue or Library.
@@ -60,6 +68,7 @@ Tracks play as the original file, FLAC included, with gapless transitions betwee
 | `server_name` | which of the account's servers to browse by default; the first owned one otherwise |
 | `remote_bitrate` | kbps to transcode to on any non-local connection, e.g. `192` to save mobile data; original when unset |
 | `server`, `token` | a fixed server and token, which skip account discovery entirely |
+| `navidrome` | `{"url", "user", "password"}` for a Subsonic server; written by `dotamp navidrome` |
 
 The log lives at `~/Library/Caches/dotamp/dotamp.log` on macOS and `~/.cache/dotamp/dotamp.log` elsewhere. `dotamp --debug` adds every HTTP request to it.
 

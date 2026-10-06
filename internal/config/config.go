@@ -18,13 +18,21 @@ type Config struct {
 	Section  string  `json:"section,omitempty"`
 	Volume   float64 `json:"volume"`
 
-	AccountToken  string `json:"account_token,omitempty"` // from `dotamp login`
-	ServerName    string `json:"server_name,omitempty"`   // which of the account's servers to use; first owned when empty
-	LastServer    string `json:"last_server,omitempty"`   // the connection discovery chose last time, for starts without plex.tv
-	LastToken     string `json:"last_token,omitempty"`
-	LastServerID  string `json:"last_server_id,omitempty"`
-	RemoteBitrate int    `json:"remote_bitrate,omitempty"` // kbps to transcode to on any non-local connection; 0 = original
-	Visual        string `json:"visual,omitempty"`         // analyzer mode: "bars", "scope", "spectrogram" or "stereo"
+	AccountToken  string     `json:"account_token,omitempty"` // from `dotamp login`
+	ServerName    string     `json:"server_name,omitempty"`   // which of the account's servers to use; first owned when empty
+	LastServer    string     `json:"last_server,omitempty"`   // the connection discovery chose last time, for starts without plex.tv
+	LastToken     string     `json:"last_token,omitempty"`
+	LastServerID  string     `json:"last_server_id,omitempty"`
+	RemoteBitrate int        `json:"remote_bitrate,omitempty"` // kbps to transcode to on any non-local connection; 0 = original
+	Visual        string     `json:"visual,omitempty"`         // analyzer mode: "bars", "scope", "spectrogram" or "stereo"
+	Navidrome     *Navidrome `json:"navidrome,omitempty"`
+}
+
+// Navidrome is an optional second library on a Subsonic-compatible server.
+type Navidrome struct {
+	URL      string `json:"url"`
+	User     string `json:"user"`
+	Password string `json:"password"`
 }
 
 // Manual reports whether a hand-written server and token are set.
@@ -63,7 +71,7 @@ func Load() (Config, error) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		return Config{}, fmt.Errorf("parse %s: %w", Path(), err)
 	}
-	if !c.Manual() && c.AccountToken == "" {
+	if !c.Manual() && c.AccountToken == "" && c.Navidrome == nil {
 		return Config{}, fmt.Errorf("%s: run `dotamp login`, or set server and token", Path())
 	}
 	dirty := false
