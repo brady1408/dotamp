@@ -51,6 +51,8 @@ The Library opens on a menu: **Artists** is every artist on the current server w
 
 Tracks play as the original file, FLAC included, with gapless transitions between tracks. A file that would not fit through Plex's relay is transcoded to MP3 320 on the way.
 
+Output is 32-bit float at one fixed device rate, 44.1 kHz unless `output_rate` says otherwise. Every file is converted to that rate once, through a windowed-sinc resampler that passes a tone within a fraction of a decibel and rejects aliasing by better than 40 dB. If your DAC runs at 48 or 96 kHz, set `output_rate` to match and nothing is converted twice.
+
 ## Visualizers
 
 `v` cycles four views of what the speaker is playing right now, all drawn from the same audio tap thirty times a second, all taking their colours from your terminal's palette:
@@ -73,6 +75,7 @@ The one you leave it on is remembered.
 | `server`, `token` | a fixed server and token, which skip account discovery entirely |
 | `navidrome` | `{"url", "user", "password"}` for a Subsonic server; written by the first run or `dotamp navidrome` |
 | `visual` | the visualizer to start on: `bars`, `scope`, `spectrogram` or `stereo`; `v` updates it |
+| `output_rate` | the sample rate the audio device is opened at; 44100 when unset. Set it to your DAC's rate (48000, 96000, …) so the OS does not resample a second time |
 
 The log lives at `~/Library/Caches/dotamp/dotamp.log` on macOS and `~/.cache/dotamp/dotamp.log` elsewhere. `dotamp --debug` adds every HTTP request to it.
 

@@ -18,6 +18,8 @@ func (f stereoFake) Spectrum(n int, dst []float64) int {
 	return n
 }
 
+func (f stereoFake) Rate() int { return 44100 }
+
 func (f stereoFake) Stereo(n int, l, r []float64) int {
 	for i := 0; i < n; i++ {
 		th := 2 * math.Pi * 440 * float64(i) / 44100

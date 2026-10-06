@@ -120,7 +120,7 @@ func TestEngineSeekLeavesNoStaleError(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	e.Play(src)
 	time.Sleep(100 * time.Millisecond) // decoder is now blocked on the stalled body
@@ -129,7 +129,7 @@ func TestEngineSeekLeavesNoStaleError(t *testing.T) {
 		t.Fatalf("stale error after seek: %v", err)
 	}
 	time.Sleep(100 * time.Millisecond)
-	if n := out.p.pull(1024); n[0] == 0 && n[1] == 0 && n[2] == 0 && n[3] == 0 {
+	if n := out.p.pull(1024); sample(n, 0) == 0 && sample(n, 1) == 0 {
 		t.Fatal("no audio after seeking away from a stalled read")
 	}
 }
@@ -138,7 +138,7 @@ func TestEngineSeekLeavesNoStaleError(t *testing.T) {
 // ending the track and waiting for the controller.
 func TestEngineSeekToEndChainsIntoNext(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	a := &fakeSource{rate: 44100, frames: 44100}
 	b := &constSource{fakeSource: fakeSource{rate: 44100, frames: 44100}, value: 0.25}

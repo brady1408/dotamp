@@ -4,12 +4,18 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
+// OutRate is the default device rate; the engine runs at whatever rate it
+// was opened with.
 const OutRate = 44100
+
+// frameBytes is one stereo frame at the output: two 32-bit float samples.
+const frameBytes = 8
 
 // Engine runs Sources through decode → resample → ring → output, and taps the
 // output for the analyzer. A second source can be queued with SetNext: the
@@ -18,6 +24,7 @@ const OutRate = 44100
 // when it consumes past the boundary, which is when the deck changes.
 type Engine struct {
 	out      Output
+	rate     int // output frames per second; every source is resampled to it
 	player   Player
 	ring     *Ring
 	tap      *Tap
@@ -47,11 +54,15 @@ type Engine struct {
 	seekBase atomic.Int64 // position at the last Play/Seek/handover, in output frames
 }
 
-func NewEngine(out Output) *Engine {
+func NewEngine(out Output, rate int) *Engine {
+	if rate <= 0 {
+		rate = OutRate
+	}
 	e := &Engine{
 		out:      out,
-		ring:     NewRing(OutRate),    // 44100 floats = half a second of stereo
-		tap:      NewTap(OutRate * 2), // two seconds of history
+		rate:     rate,
+		ring:     NewRing(rate),    // rate floats = half a second of stereo
+		tap:      NewTap(rate * 2), // two seconds of history
 		done:     make(chan struct{}, 1),
 		switched: make(chan struct{}, 1),
 	}
@@ -60,6 +71,9 @@ func NewEngine(out Output) *Engine {
 	e.player = out.NewPlayer(&reader{e: e})
 	return e
 }
+
+// Rate is the output sample rate the engine was opened with.
+func (e *Engine) Rate() int { return e.rate }
 
 func (e *Engine) Done() <-chan struct{}     { return e.done }
 func (e *Engine) Handover() <-chan struct{} { return e.switched }
@@ -90,7 +104,7 @@ func (e *Engine) PlayAt(src Source, at time.Duration) {
 	base := int64(0)
 	if at > 0 {
 		if err := src.Seek(at); err == nil {
-			base = int64(at.Seconds() * OutRate)
+			base = int64(at.Seconds() * float64(e.rate))
 		}
 	}
 	e.mu.Lock()
@@ -252,7 +266,7 @@ func (e *Engine) decode(src Source, stop, decoded chan struct{}) {
 			e.srcDone.Store(true)
 		}
 	}()
-	rs := NewResampler(src.SampleRate(), OutRate)
+	rs := NewResampler(src.SampleRate(), e.rate)
 	buf := make([]float32, 4096)
 	for {
 		select {
@@ -305,7 +319,7 @@ func (e *Engine) decode(src Source, stop, decoded chan struct{}) {
 			}
 		}
 		src = next
-		rs = NewResampler(src.SampleRate(), OutRate)
+		rs = NewResampler(src.SampleRate(), e.rate)
 	}
 }
 
@@ -385,7 +399,7 @@ func (e *Engine) Seek(d time.Duration) {
 		// hand over to a queued next at once, or let Done fire.
 		e.mu.Lock()
 		e.seekAt.Store(e.consumed.Load())
-		e.seekBase.Store(int64(length.Seconds() * OutRate))
+		e.seekBase.Store(int64(length.Seconds() * float64(e.rate)))
 		e.doneSent.Store(false)
 		e.mu.Unlock()
 		next, started := e.chainNext()
@@ -411,7 +425,7 @@ func (e *Engine) Seek(d time.Duration) {
 		go e.decode(next, stop, decoded)
 		return
 	}
-	base := int64(d.Seconds() * OutRate)
+	base := int64(d.Seconds() * float64(e.rate))
 	if err := src.Seek(d); err != nil {
 		e.mu.Lock()
 		e.err = err
@@ -431,12 +445,12 @@ func (e *Engine) Seek(d time.Duration) {
 }
 
 func (e *Engine) positionFrames() int64 {
-	frames := e.seekBase.Load() + e.consumed.Load() - e.seekAt.Load() - int64(e.player.BufferedSize()/4)
+	frames := e.seekBase.Load() + e.consumed.Load() - e.seekAt.Load() - int64(e.player.BufferedSize()/frameBytes)
 	return max(frames, 0)
 }
 
 func (e *Engine) Position() time.Duration {
-	return time.Duration(float64(e.positionFrames()) / OutRate * float64(time.Second))
+	return time.Duration(float64(e.positionFrames()) / float64(e.rate) * float64(time.Second))
 }
 
 func (e *Engine) SetVolume(v float64) {
@@ -452,23 +466,24 @@ func (e *Engine) SetVolume(v float64) {
 func (e *Engine) Volume() float64 { return float64(e.volume.Load()) / 1e6 }
 
 func (e *Engine) Spectrum(n int, dst []float64) int {
-	return e.tap.Latest(n, e.player.BufferedSize()/4, dst)
+	return e.tap.Latest(n, e.player.BufferedSize()/frameBytes, dst)
 }
 
 // Stereo is Spectrum with left and right kept apart.
 func (e *Engine) Stereo(n int, l, r []float64) int {
-	return e.tap.LatestStereo(n, e.player.BufferedSize()/4, l, r)
+	return e.tap.LatestStereo(n, e.player.BufferedSize()/frameBytes, l, r)
 }
 
-// reader is what the output pulls from: s16le stereo, never short, silence when
-// the ring is empty. It applies volume, feeds the tap, and performs handovers.
+// reader is what the output pulls from: 32-bit float stereo, never short,
+// silence when the ring is empty. It applies volume, feeds the tap, and
+// performs handovers.
 type reader struct {
 	e       *Engine
 	scratch []float32
 }
 
 func (r *reader) Read(p []byte) (int, error) {
-	frames := len(p) / 4
+	frames := len(p) / frameBytes
 	if cap(r.scratch) < frames*2 {
 		r.scratch = make([]float32, frames*2)
 	}
@@ -503,7 +518,7 @@ func (r *reader) Read(p []byte) (int, error) {
 		} else if v < -1 {
 			v = -1
 		}
-		binary.LittleEndian.PutUint16(p[2*i:], uint16(int16(v*32767)))
+		binary.LittleEndian.PutUint32(p[4*i:], math.Float32bits(v))
 	}
-	return frames * 4, nil
+	return frames * frameBytes, nil
 }

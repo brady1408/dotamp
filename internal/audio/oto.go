@@ -14,7 +14,7 @@ func NewOtoOutput(rate int) (Output, error) {
 	ctx, ready, err := oto.NewContext(&oto.NewContextOptions{
 		SampleRate:      rate,
 		ChannelCount:    2,
-		Format:          oto.FormatSignedInt16LE,
+		Format:          oto.FormatFloat32LE,
 		BufferSize:      100 * time.Millisecond,
 		ApplicationName: "dotamp",
 	})

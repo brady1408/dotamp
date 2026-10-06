@@ -19,6 +19,7 @@ const (
 type SpectrumSource interface {
 	Spectrum(n int, dst []float64) int // mono frames at the playhead
 	Stereo(n int, l, r []float64) int  // the same frames, channels apart
+	Rate() int                         // frames per second those are
 }
 
 type Analyzer struct {
@@ -56,7 +57,7 @@ func (a *Analyzer) resize(w, h int) {
 	}
 	a.cv = canvas.NewBraille(w, h)
 	a.nbars = w
-	a.bands = dsp.NewBands(a.nbars, fftN/2, 44100, bandLo, bandHi)
+	a.bands = dsp.NewBands(a.nbars, fftN/2, a.src.Rate(), bandLo, bandHi)
 	a.levels = make([]float64, a.nbars)
 	a.smooth.Update(a.levels) // size the smoother to the new bar count before any Draw
 }
@@ -93,7 +94,7 @@ func (a *Analyzer) Update(w, h int) {
 			}
 		}
 	case ModeSpectrogram:
-		a.sg.resize(w, h)
+		a.sg.resize(w, h, a.src.Rate())
 		a.sg.update(mag)
 	case ModeStereo:
 		if a.left == nil {
@@ -118,7 +119,7 @@ func (a *Analyzer) Draw(s tcell.Screen, r Rect) {
 		a.drawScope(s, r)
 		return
 	case ModeSpectrogram:
-		a.sg.resize(r.W, r.H)
+		a.sg.resize(r.W, r.H, a.src.Rate())
 		a.sg.draw(s, r)
 		return
 	case ModeStereo:

@@ -19,7 +19,7 @@ func TestControllerRetriesMidTrackFailureFromPosition(t *testing.T) {
 	requests := func() int { return len(ranges()) }
 	lib := &fakeLib{url: srv.URL}
 	out := &fakeOutput{}
-	eng := NewEngine(out)
+	eng := NewEngine(out, OutRate)
 	defer eng.Close()
 	var nmu sync.Mutex
 	var notices []string
@@ -64,7 +64,7 @@ func TestControllerGivesUpWhenEveryTrackFailsUnderRepeat(t *testing.T) {
 	srv := fixtureServer(t)
 	lib := &fakeLib{url: srv.URL, fails: map[string]int{"a": 1 << 30, "b": 1 << 30}}
 	out := &fakeOutput{}
-	eng := NewEngine(out)
+	eng := NewEngine(out, OutRate)
 	defer eng.Close()
 	c := NewController(lib, eng, func(string) {})
 	c.ToggleRepeat()

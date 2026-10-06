@@ -15,7 +15,7 @@ import (
 // must never panic on a double channel close.
 func TestEngineConcurrentControlDoesNotPanic(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	e.Play(&fakeSource{rate: 44100, frames: 44100 * 10})
 	stop := make(chan struct{})
@@ -66,7 +66,7 @@ func TestEngineConcurrentControlDoesNotPanic(t *testing.T) {
 // on with a clock stuck at the length.
 func TestEngineSeekPastEndOfRealFileEndsTrack(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	src, err := NewFLAC(openFixture(t, "sine440-44k.flac"))
 	if err != nil {
@@ -94,7 +94,7 @@ func TestEngineSeekPastEndOfRealFileEndsTrack(t *testing.T) {
 // the first track of whatever Play comes next.
 func TestEnginePlayDrainsStaleDone(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	e.Play(&fakeSource{rate: 44100, frames: 441})
 	deadline := time.After(3 * time.Second)
@@ -130,7 +130,7 @@ func (b *blockedSource) Interrupt() { b.once.Do(func() { close(b.release) }) }
 // Silence inserted on underrun must not move the clock.
 func TestEnginePositionIgnoresUnderrunSilence(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	src := &blockedSource{fakeSource: fakeSource{rate: 44100, frames: 44100}, release: make(chan struct{})}
 	e.Play(src)
@@ -163,7 +163,7 @@ func TestEngineStopUnblocksStalledRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	e.Play(src)
 	time.Sleep(100 * time.Millisecond) // decoder consumes the 16 KB and blocks
 	done := make(chan struct{})
@@ -182,7 +182,7 @@ func (p *panicSource) Read([]float32) (int, error) { panic("decoder bug") }
 
 func TestEngineDecodePanicBecomesError(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	e.Play(&panicSource{fakeSource{rate: 44100, frames: 44100}})
 	deadline := time.After(3 * time.Second)

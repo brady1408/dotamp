@@ -23,12 +23,12 @@ type spectrogram struct {
 	head    int         // index of the oldest column in history
 }
 
-func (sg *spectrogram) resize(w, h int) {
+func (sg *spectrogram) resize(w, h, rate int) {
 	if sg.w == w && sg.h == h {
 		return
 	}
 	sg.w, sg.h = w, h
-	sg.bands = dsp.NewBands(h*2, fftN/2, 44100, bandLo, bandHi)
+	sg.bands = dsp.NewBands(h*2, fftN/2, rate, bandLo, bandHi)
 	sg.levels = make([]float64, h*2)
 	sg.column = make([]float64, h*2)
 	sg.ticks = 0

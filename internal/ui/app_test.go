@@ -49,7 +49,7 @@ func newApp(t *testing.T) (*App, tcell.SimulationScreen, *appLib) {
 	}))
 	t.Cleanup(srv.Close)
 	lib := &appLib{url: srv.URL}
-	eng := audio.NewEngine(nullOutput{})
+	eng := audio.NewEngine(nullOutput{}, audio.OutRate)
 	t.Cleanup(eng.Close)
 	ctrl := audio.NewController(lib, eng, func(string) {})
 	s := sim(t, 80, 24)

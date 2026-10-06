@@ -20,6 +20,8 @@ type silent struct{}
 
 func (silent) Spectrum(n int, dst []float64) int { return 0 }
 func (silent) Stereo(n int, l, r []float64) int  { return 0 }
+func (silent) Rate() int                         { return 44100 }
+func (sineSpectrum) Rate() int                   { return 44100 }
 
 func (s sineSpectrum) Stereo(n int, l, r []float64) int {
 	s.Spectrum(n, l)

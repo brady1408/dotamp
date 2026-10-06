@@ -548,11 +548,19 @@ func run(debugLog bool) (err error) {
 		}
 	}
 
-	out, err := audio.NewOtoOutput(audio.OutRate)
-	if err != nil {
-		return fmt.Errorf("audio device: %w", err)
+	rate := cfg.OutputRate
+	if rate <= 0 {
+		rate = audio.OutRate
 	}
-	eng := audio.NewEngine(out)
+	if rate < 8000 || rate > 384000 {
+		return fmt.Errorf("output_rate %d is not a sample rate the device can use", rate)
+	}
+	out, err := audio.NewOtoOutput(rate)
+	if err != nil {
+		return fmt.Errorf("audio device at %d Hz: %w", rate, err)
+	}
+	eng := audio.NewEngine(out, rate)
+	log.Printf("output: %d Hz, 32-bit float", rate)
 	defer eng.Close()
 	eng.SetVolume(cfg.Volume)
 

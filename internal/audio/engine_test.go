@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"encoding/binary"
 	"io"
 	"math"
 	"sync"
@@ -58,9 +59,14 @@ func (p *fakePlayer) Close() error                 { return nil }
 func (p *fakePlayer) isPlaying() bool              { p.mu.Lock(); defer p.mu.Unlock(); return p.playing }
 func (p *fakePlayer) setBuffered(n int)            { p.mu.Lock(); p.buffered = n; p.mu.Unlock() }
 func (p *fakePlayer) pull(frames int) []byte {
-	b := make([]byte, frames*4)
+	b := make([]byte, frames*frameBytes)
 	_, _ = io.ReadFull(p.r, b)
 	return b
+}
+
+// sample decodes the i-th float32 of a pulled buffer.
+func sample(b []byte, i int) float32 {
+	return math.Float32frombits(binary.LittleEndian.Uint32(b[4*i:]))
 }
 
 // pullUntilDone drains the engine's reader until it signals Done. The test
@@ -73,8 +79,8 @@ func pullUntilDone(t *testing.T, e *Engine, p *fakePlayer) (frames int, nonSilen
 		b := p.pull(1024)
 		frames += 1024
 		silent := true
-		for i := 0; i+1 < len(b); i += 4 {
-			if b[i] != 0 || b[i+1] != 0 {
+		for f := 0; f < 1024; f++ {
+			if sample(b, 2*f) != 0 {
 				nonSilent++
 				silent = false
 			}
@@ -94,7 +100,7 @@ func pullUntilDone(t *testing.T, e *Engine, p *fakePlayer) (frames int, nonSilen
 
 func TestEnginePlaysAndResamples(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	src := &fakeSource{rate: 48000, frames: 48000} // 1 s at 48 kHz
 	e.Play(src)
@@ -112,7 +118,7 @@ func TestEnginePlaysAndResamples(t *testing.T) {
 
 func TestEngineVolumeAndSilenceWhenEmpty(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	e.SetVolume(2)
 	if e.Volume() != 1 {
@@ -122,21 +128,21 @@ func TestEngineVolumeAndSilenceWhenEmpty(t *testing.T) {
 	e.Play(&fakeSource{rate: 44100, frames: 4410})
 	time.Sleep(50 * time.Millisecond) // let the decoder fill the ring
 	b := out.p.pull(1024)
-	for _, x := range b {
-		if x != 0 {
+	for i := 0; i < 2048; i++ {
+		if sample(b, i) != 0 { // -0 compares equal to 0, as it should
 			t.Fatal("volume 0 must produce silence")
 		}
 	}
 	e.Stop()
 	b = out.p.pull(16) // nothing queued: reader must still return bytes, all zero
-	if len(b) != 64 {
+	if len(b) != 16*frameBytes {
 		t.Fatal("reader must never short-read")
 	}
 }
 
 func TestEngineSeekClampsAndPosition(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	src := &fakeSource{rate: 44100, frames: 44100 * 10}
 	e.Play(src)
@@ -154,7 +160,7 @@ func TestEngineSeekClampsAndPosition(t *testing.T) {
 		out.p.pull(1024)
 		time.Sleep(time.Millisecond)
 	}
-	out.p.setBuffered(4410 * 4) // 0.1 s still in the device buffer
+	out.p.setBuffered(4410 * frameBytes) // 0.1 s still in the device buffer
 	if p := e.Position(); p < 3800*time.Millisecond || p > 4000*time.Millisecond {
 		t.Fatalf("position = %v, want ~3.9 s", p)
 	}
@@ -162,7 +168,7 @@ func TestEngineSeekClampsAndPosition(t *testing.T) {
 
 func TestEnginePauseResume(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	e.Play(&fakeSource{rate: 44100, frames: 44100})
 	e.Pause()
@@ -177,7 +183,7 @@ func TestEnginePauseResume(t *testing.T) {
 
 func TestEngineSpectrumUsesTap(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	e.Play(&fakeSource{rate: 44100, frames: 44100})
 	time.Sleep(50 * time.Millisecond)

@@ -67,7 +67,7 @@ func TestControllerAdvancesAndSkipsBrokenTrack(t *testing.T) {
 	srv := fixtureServer(t)
 	lib := &fakeLib{url: srv.URL, fails: map[string]int{"b": 2}} // b fails first try and the retry
 	out := &fakeOutput{}
-	eng := NewEngine(out)
+	eng := NewEngine(out, OutRate)
 	defer eng.Close()
 	var nmu sync.Mutex
 	var notices []string
@@ -106,7 +106,7 @@ func TestControllerAdvancesAndSkipsBrokenTrack(t *testing.T) {
 func TestControllerSeekByClampsAtZero(t *testing.T) {
 	srv := fixtureServer(t)
 	out := &fakeOutput{}
-	eng := NewEngine(out)
+	eng := NewEngine(out, OutRate)
 	defer eng.Close()
 	c := NewController(&fakeLib{url: srv.URL}, eng, func(string) {})
 	ctx := context.Background()

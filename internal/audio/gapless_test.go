@@ -36,8 +36,8 @@ func pullSlowly(p *fakePlayer, frames int) []int16 {
 	out := make([]int16, 0, frames)
 	for len(out) < frames {
 		b := p.pull(256)
-		for i := 0; i+1 < len(b); i += 4 {
-			out = append(out, int16(uint16(b[i])|uint16(b[i+1])<<8))
+		for f := 0; f < 256; f++ {
+			out = append(out, int16(sample(b, 2*f)*32767))
 		}
 		time.Sleep(200 * time.Microsecond)
 	}
@@ -46,7 +46,7 @@ func pullSlowly(p *fakePlayer, frames int) []int16 {
 
 func TestEngineHandoverLeavesNoGap(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	a := &fakeSource{rate: 44100, frames: 4410}                                       // 0.1 s sine
 	b := &constSource{fakeSource: fakeSource{rate: 48000, frames: 4800}, value: 0.25} // 0.1 s at 48 kHz
@@ -97,7 +97,7 @@ func TestEngineHandoverLeavesNoGap(t *testing.T) {
 
 func TestEngineHandoverPositionRestarts(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	a := &fakeSource{rate: 44100, frames: 4410}
 	b := &fakeSource{rate: 44100, frames: 44100}
@@ -112,7 +112,7 @@ func TestEngineHandoverPositionRestarts(t *testing.T) {
 
 func TestEngineSeekKeepsQueuedNext(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	a := &fakeSource{rate: 44100, frames: 4410}
 	b := &constSource{fakeSource: fakeSource{rate: 44100, frames: 4410}, value: 0.25}
@@ -145,7 +145,7 @@ func TestEngineSeekKeepsQueuedNext(t *testing.T) {
 
 func TestEnginePlayDiscardsPendingNext(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	a := &fakeSource{rate: 44100, frames: 44100}
 	b := &fakeSource{rate: 44100, frames: 44100}
@@ -163,7 +163,7 @@ func TestEnginePlayDiscardsPendingNext(t *testing.T) {
 
 func TestEngineTakeNextRewindsAStartedNext(t *testing.T) {
 	out := &fakeOutput{}
-	e := NewEngine(out)
+	e := NewEngine(out, OutRate)
 	defer e.Close()
 	a := &fakeSource{rate: 44100, frames: 441}
 	b := &fakeSource{rate: 44100, frames: 44100}
@@ -185,7 +185,7 @@ func TestControllerGaplessHandover(t *testing.T) {
 	srv := fixtureServer(t)
 	lib := &fakeLib{url: srv.URL}
 	out := &fakeOutput{}
-	eng := NewEngine(out)
+	eng := NewEngine(out, OutRate)
 	defer eng.Close()
 	c := NewController(lib, eng, func(string) {})
 	ctx, cancel := context.WithCancel(context.Background())
