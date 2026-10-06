@@ -1,6 +1,6 @@
 # dotamp
 
-A terminal music player drawn in dots. Plays your Plex music library with a braille spectrum analyzer, Winamp-shaped, in any modern terminal.
+A terminal music player drawn in dots. Plays your Plex or Navidrome library, Winamp-shaped, with four visualizers drawn in braille, in any modern terminal.
 
 ## Install
 
@@ -26,7 +26,7 @@ With both kinds of library configured, search covers all of them, the Servers en
 
 ## Use
 
-Run `dotamp`. The deck on top shows the track, format, clock and seek bar. The analyzer takes the middle. The bottom pane is Queue or Library.
+Run `dotamp`. The deck on top shows the track, format, clock and seek bar. The visualizer takes the middle. The bottom pane is Queue or Library.
 
 | Key | Action |
 |---|---|
@@ -47,20 +47,32 @@ Run `dotamp`. The deck on top shows the track, format, clock and seek bar. The a
 
 The mouse works too: click the seek bar, double-click a row, scroll the lists.
 
-The Library opens on a menu: **Artists** is every artist on the current server with letter jumps, **Recently added** the latest albums, and **Servers** appears when your account can reach more than one server with music. Search always asks all of them and groups the results by server, marking copies that live on a remote or relayed server.
+The Library opens on a menu: **Artists** is every artist on the current server with letter jumps, **Recently added** the latest albums, and **Servers** appears when more than one server with music is reachable, your Navidrome, your Plex, and any Plex shared with you. Search always asks all of them and groups the results by server, marking copies that live on a remote or relayed server.
 
 Tracks play as the original file, FLAC included, with gapless transitions between tracks. A file that would not fit through Plex's relay is transcoded to MP3 320 on the way.
 
+## Visualizers
+
+`v` cycles four views of what the speaker is playing right now, all drawn from the same audio tap thirty times a second, all taking their colours from your terminal's palette:
+
+- **Bars**: a spectrum analyzer, one braille column per terminal column on a log frequency axis, with peak caps that hold and fall.
+- **Oscilloscope**: the waveform as a line, triggered on a zero crossing so a steady tone holds still.
+- **Spectrogram**: a waterfall scrolling left to right, frequency bottom to top, loudness as colour. Harmonics stack as lines, drums are vertical streaks, reverb fades to the right.
+- **Stereo field**: left channel across, right channel up. Mono draws a diagonal, a wide mix fills a cloud, a channel out of phase leans the other way.
+
+The one you leave it on is remembered.
+
 ## Config
 
-`~/.config/dotamp/config.json` is written by `dotamp login`. Optional keys:
+`~/.config/dotamp/config.json` is written by the first run. Optional keys:
 
 | Key | Meaning |
 |---|---|
 | `server_name` | which of the account's servers to browse by default; the first owned one otherwise |
 | `remote_bitrate` | kbps to transcode to on any non-local connection, e.g. `192` to save mobile data; original when unset |
 | `server`, `token` | a fixed server and token, which skip account discovery entirely |
-| `navidrome` | `{"url", "user", "password"}` for a Subsonic server; written by `dotamp navidrome` |
+| `navidrome` | `{"url", "user", "password"}` for a Subsonic server; written by the first run or `dotamp navidrome` |
+| `visual` | the visualizer to start on: `bars`, `scope`, `spectrogram` or `stereo`; `v` updates it |
 
 The log lives at `~/Library/Caches/dotamp/dotamp.log` on macOS and `~/.cache/dotamp/dotamp.log` elsewhere. `dotamp --debug` adds every HTTP request to it.
 
