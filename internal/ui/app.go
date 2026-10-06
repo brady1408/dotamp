@@ -330,7 +330,7 @@ func (a *App) Draw() {
 		Volume: a.eng.Volume(), Shuffle: a.ctrl.Shuffle(), Repeat: a.ctrl.Repeat(), Tick: a.tick,
 	}
 	if has {
-		st.Artist, st.Title, st.Codec = cur.Artist, cur.Title, cur.Codec
+		st.Artist, st.Title, st.Album, st.Codec = cur.Artist, cur.Title, cur.Album, cur.Codec
 		st.SampleRate, st.BitDepth, st.Bitrate = cur.SampleRate, cur.BitDepth, cur.Bitrate
 	}
 	if a.notice != "" && time.Now().Before(a.noticeUntil) {

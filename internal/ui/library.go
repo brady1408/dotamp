@@ -328,7 +328,11 @@ func (b *Browser) Search(ctx context.Context, q string) error {
 		for i := range res.Tracks {
 			t := &res.Tracks[i]
 			if sid == "" || t.Server == sid {
-				rows = append(rows, Row{Text: t.Artist + " — " + t.Title, Right: Clock(t.Duration), Track: t})
+				text := t.Artist + " — " + t.Title
+				if t.Album != "" {
+					text += "  ·  " + t.Album
+				}
+				rows = append(rows, Row{Text: text, Right: Clock(t.Duration), Track: t})
 			}
 		}
 	}

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/gdamore/tcell/v2"
@@ -85,4 +86,27 @@ func TestSearchFieldKeys(t *testing.T) {
 	if _, cancel := f.Key(tcell.NewEventKey(tcell.KeyEscape, 0, 0)); !cancel || f.Open {
 		t.Fatal("escape should cancel and close")
 	}
+}
+
+func TestSearchTrackRowsNameTheAlbum(t *testing.T) {
+	b := NewBrowser(albumLib{})
+	if err := b.Search(context.Background(), "bye"); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range b.List().Rows {
+		if r.Track != nil {
+			if !strings.Contains(r.Text, "No Strings Attached") {
+				t.Fatalf("track row should name its album: %q", r.Text)
+			}
+			return
+		}
+	}
+	t.Fatal("no track row")
+}
+
+// albumLib returns a track search hit with its album filled in.
+type albumLib struct{ stubLib }
+
+func (albumLib) Search(context.Context, string) (library.SearchResult, error) {
+	return library.SearchResult{Tracks: []library.Track{{ID: "300", Title: "Bye Bye Bye", Artist: "*NSYNC", Album: "No Strings Attached"}}}, nil
 }

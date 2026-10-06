@@ -13,6 +13,7 @@ type DeckState struct {
 	Playing          bool
 	Position, Length time.Duration
 	Artist, Title    string
+	Album            string
 	Codec            string
 	SampleRate       int
 	BitDepth         int
@@ -68,7 +69,8 @@ func DrawDeck(s tcell.Screen, r Rect, st DeckState) {
 	}
 	PutStr(s, x, r.Y, Marquee(title, r.W-(x-r.X)-1, st.Tick), base)
 
-	// Row 2: format readout, or a notice.
+	// Row 2: format readout and the album, or a notice. The volume bar keeps
+	// its place on the right; the album is cut to whatever room is left.
 	if st.Notice != "" {
 		PutStr(s, r.X, r.Y+1, Fit(" "+st.Notice, r.W), base.Foreground(tcell.PaletteColor(11)))
 	} else {
@@ -86,7 +88,16 @@ func DrawDeck(s tcell.Screen, r Rect, st DeckState) {
 		}
 		right := "vol " + vol + flags + " "
 		rw := uniseg.StringWidth(right)
-		PutStr(s, r.X, r.Y+1, Fit(info, r.W-rw), dim)
+		left := r.W - rw
+		x := r.X + PutStr(s, r.X, r.Y+1, Fit(info, min(uniseg.StringWidth(info), left)), dim)
+		if room := r.X + left - x; st.Album != "" && room > 6 {
+			album := Fit("  ·  "+st.Album, room)
+			if uniseg.StringWidth("  ·  "+st.Album) > room { // mark the cut
+				album = Fit("  ·  "+st.Album, room-1) + "…"
+			}
+			x += PutStr(s, x, r.Y+1, album, dim)
+		}
+		PutStr(s, x, r.Y+1, Fit("", r.X+left-x), base)
 		PutStr(s, r.X+r.W-rw, r.Y+1, right, dim)
 	}
 

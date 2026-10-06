@@ -26,7 +26,7 @@ With both kinds of library configured, search covers all of them, the Servers en
 
 ## Use
 
-Run `dotamp`. The deck on top shows the track, format, clock and seek bar. The visualizer takes the middle. The bottom pane is Queue or Library.
+Run `dotamp`. The deck on top shows the track, its album and format, the clock and the seek bar. The visualizer takes the middle. The bottom pane is Queue or Library.
 
 | Key | Action |
 |---|---|

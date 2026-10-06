@@ -68,3 +68,26 @@ func TestDrawDeckNoticeReplacesRow2(t *testing.T) {
 		t.Fatalf("row1 = %q", r[1])
 	}
 }
+
+func TestDrawDeckShowsTheAlbum(t *testing.T) {
+	s := sim(t, 80, 3)
+	DrawDeck(s, Rect{0, 0, 80, 3}, DeckState{
+		Playing: true, Artist: "*NSYNC", Title: "Bye Bye Bye", Album: "No Strings Attached",
+		Codec: "flac", SampleRate: 44100, BitDepth: 16, Bitrate: 978, Volume: 0.7,
+	})
+	s.Show()
+	r := rows(s)
+	if !strings.Contains(r[1], "No Strings Attached") || !strings.Contains(r[1], "FLAC") {
+		t.Fatalf("row1 should carry the format and the album: %q", r[1])
+	}
+	// A long album name is cut rather than pushing the volume bar off the row.
+	DrawDeck(s, Rect{0, 0, 80, 3}, DeckState{
+		Artist: "A", Title: "B", Album: strings.Repeat("Very Long Album Name ", 6),
+		Codec: "flac", SampleRate: 44100, BitDepth: 16, Bitrate: 978, Volume: 0.7,
+	})
+	s.Show()
+	r = rows(s)
+	if !strings.Contains(r[1], "vol ") || uniseg.StringWidth(r[1]) > 80 {
+		t.Fatalf("row1 overflowed: %q", r[1])
+	}
+}
