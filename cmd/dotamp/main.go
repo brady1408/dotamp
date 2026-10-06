@@ -69,18 +69,50 @@ func plexTV(clientID string) *plextv.Client {
 	return c
 }
 
-// login signs in with a Plex account through the PIN flow, saves the account
-// token, and reports which server dotamp will use.
+// login signs in with a Plex account and reports which server dotamp will use.
 func login() error {
-	cfg, err := config.Load()
-	if errors.Is(err, config.ErrNotFound) {
-		cfg = config.Config{}
-	} else if err != nil && !strings.Contains(err.Error(), "dotamp login") {
+	cfg, err := loadOrEmpty()
+	if err != nil {
 		return err
+	}
+	if err := signIn(&cfg); err != nil {
+		return err
+	}
+	if err := config.Save(cfg); err != nil {
+		return err
+	}
+	fmt.Println("Signed in.")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	server, _, cn, err := resolveServer(ctx, &cfg)
+	if err != nil {
+		fmt.Printf("Could not reach a server yet: %v\n", err)
+		return nil
+	}
+	_ = config.Save(cfg)
+	fmt.Printf("Server: %s via %s%s\n", server, cn.URI, where(cn))
+	return nil
+}
+
+// loadOrEmpty returns the config, or an empty one when none exists yet or
+// the existing one has no source configured.
+func loadOrEmpty() (config.Config, error) {
+	cfg, err := config.Load()
+	if errors.Is(err, config.ErrNotFound) || (err != nil && strings.Contains(err.Error(), "dotamp login")) {
+		cfg = config.Config{}
+		err = nil
 	}
 	if cfg.ClientID == "" {
 		cfg.ClientID = config.NewClientID()
 	}
+	if cfg.Volume <= 0 {
+		cfg.Volume = 0.8
+	}
+	return cfg, err
+}
+
+// signIn runs the Plex PIN flow and stores the account token in cfg.
+func signIn(cfg *config.Config) error {
 	tv := plexTV(cfg.ClientID)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -99,14 +131,14 @@ func login() error {
 		}
 		tokenCh <- tok
 	}()
-	var token string
 	dots := time.NewTicker(2 * time.Second)
 	defer dots.Stop()
-wait:
 	for {
 		select {
-		case token = <-tokenCh:
-			break wait
+		case tok := <-tokenCh:
+			fmt.Println()
+			cfg.AccountToken = tok
+			return nil
 		case err := <-errCh:
 			fmt.Println()
 			return err
@@ -114,23 +146,105 @@ wait:
 			fmt.Print(".")
 		}
 	}
+}
+
+// prompter asks questions on the terminal, or reads answers from stdin when
+// there is no terminal, so setup can be scripted and tested.
+type prompter struct{ in *bufio.Reader }
+
+func newPrompter() *prompter { return &prompter{in: bufio.NewReader(os.Stdin)} }
+
+func (p *prompter) line(prompt string) (string, error) {
+	fmt.Print(prompt)
+	line, err := p.in.ReadString('\n')
+	line = strings.TrimRight(line, "\r\n")
+	if err != nil && line == "" {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
+func (p *prompter) yes(prompt string, def bool) (bool, error) {
+	hint := "[Y/n]"
+	if !def {
+		hint = "[y/N]"
+	}
+	a, err := p.line(prompt + " " + hint + " ")
+	if err != nil {
+		return false, err
+	}
+	switch strings.ToLower(a) {
+	case "":
+		return def, nil
+	case "y", "yes":
+		return true, nil
+	}
+	return false, nil
+}
+
+func (p *prompter) password(prompt string) (string, error) {
+	fmt.Print(prompt)
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+		return string(pw), err
+	}
+	return p.line("")
+}
+
+// checkNavidrome verifies a Subsonic server and returns its version.
+func checkNavidrome(serverURL, user, pw string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return subsonic.New(serverURL, user, pw).Version(ctx)
+}
+
+// setup is the first run: it asks which libraries to use and saves them.
+func setup() (config.Config, error) {
+	cfg, err := loadOrEmpty()
+	if err != nil {
+		return cfg, err
+	}
+	p := newPrompter()
+	fmt.Println("Welcome to dotamp. Let's find your music.")
 	fmt.Println()
-	cfg.AccountToken = token
-	if cfg.Volume <= 0 {
-		cfg.Volume = 0.8
+	if ok, err := p.yes("Sign in with Plex?", true); err != nil {
+		return cfg, fmt.Errorf("no config at %s; run `dotamp login` or `dotamp navidrome URL USER`", config.Path())
+	} else if ok {
+		if err := signIn(&cfg); err != nil {
+			return cfg, err
+		}
+		fmt.Println("Signed in.")
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		if server, _, cn, err := resolveServer(ctx, &cfg); err == nil {
+			fmt.Printf("Server: %s via %s%s\n", server, cn.URI, where(cn))
+		} else {
+			fmt.Printf("Signed in, but no server answered yet: %v\n", err)
+		}
+		cancel()
+		fmt.Println()
+	}
+	if ok, err := p.yes("Add a Navidrome or other Subsonic server?", false); err == nil && ok {
+		u, _ := p.line("  Server URL (e.g. http://192.168.1.20:4533): ")
+		user, _ := p.line("  Username: ")
+		pw, _ := p.password("  Password: ")
+		if version, err := checkNavidrome(u, user, pw); err != nil {
+			fmt.Printf("  Could not connect: %v\n", err)
+		} else {
+			cfg.Navidrome = &config.Navidrome{URL: strings.TrimRight(u, "/"), User: user, Password: pw}
+			fmt.Printf("  Connected to Navidrome (%s).\n", version)
+		}
+		fmt.Println()
+	}
+	if cfg.AccountToken == "" && cfg.Navidrome == nil && !cfg.Manual() {
+		return cfg, fmt.Errorf("nothing configured. Later: `dotamp login` for Plex, `dotamp navidrome URL USER` for Navidrome, or edit %s", config.Path())
 	}
 	if err := config.Save(cfg); err != nil {
-		return err
+		return cfg, err
 	}
-	fmt.Println("Signed in.")
-	server, _, cn, err := resolveServer(ctx, &cfg)
-	if err != nil {
-		fmt.Printf("Could not reach a server yet: %v\n", err)
-		return nil
-	}
-	_ = config.Save(cfg)
-	fmt.Printf("Server: %s via %s%s\n", server, cn.URI, where(cn))
-	return nil
+	fmt.Println("Saved. Starting dotamp; press ? for keys.")
+	time.Sleep(time.Second)
+	return cfg, nil
 }
 
 // addNavidrome checks a Subsonic server with a password read from the
@@ -139,42 +253,19 @@ func addNavidrome(serverURL, user string) error {
 	if serverURL == "" || user == "" {
 		return errors.New("usage: dotamp navidrome URL USER")
 	}
-	fmt.Printf("Password for %s at %s: ", user, serverURL)
-	var pw []byte
-	var err error
-	if term.IsTerminal(int(os.Stdin.Fd())) {
-		pw, err = term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Println()
-	} else {
-		line, rerr := bufio.NewReader(os.Stdin).ReadString('\n')
-		pw, err = []byte(strings.TrimRight(line, "\r\n")), nil
-		if rerr != nil && line == "" {
-			err = rerr
-		}
-	}
+	pw, err := newPrompter().password(fmt.Sprintf("Password for %s at %s: ", user, serverURL))
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	c := subsonic.New(serverURL, user, string(pw))
-	version, err := c.Version(ctx)
+	version, err := checkNavidrome(serverURL, user, pw)
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load()
-	if errors.Is(err, config.ErrNotFound) || (err != nil && strings.Contains(err.Error(), "dotamp login")) {
-		cfg = config.Config{}
-	} else if err != nil {
+	cfg, err := loadOrEmpty()
+	if err != nil {
 		return err
 	}
-	if cfg.ClientID == "" {
-		cfg.ClientID = config.NewClientID()
-	}
-	if cfg.Volume <= 0 {
-		cfg.Volume = 0.8
-	}
-	cfg.Navidrome = &config.Navidrome{URL: strings.TrimRight(serverURL, "/"), User: user, Password: string(pw)}
+	cfg.Navidrome = &config.Navidrome{URL: strings.TrimRight(serverURL, "/"), User: user, Password: pw}
 	if err := config.Save(cfg); err != nil {
 		return err
 	}
@@ -351,8 +442,8 @@ func resolveServer(ctx context.Context, cfg *config.Config) (name, url string, c
 
 func run(debugLog bool) (err error) {
 	cfg, err := config.Load()
-	if errors.Is(err, config.ErrNotFound) {
-		return fmt.Errorf("not signed in. Run `dotamp login`, or write a server and token to %s", config.Path())
+	if errors.Is(err, config.ErrNotFound) || (err != nil && strings.Contains(err.Error(), "dotamp login")) {
+		cfg, err = setup()
 	}
 	if err != nil {
 		return err

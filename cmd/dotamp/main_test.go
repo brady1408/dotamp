@@ -24,6 +24,7 @@ func TestFirstRunWithoutConfigExplains(t *testing.T) {
 	bin := build(t)
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir())
+	cmd.Stdin = strings.NewReader("") // no answers at all
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatal("expected non-zero exit without config")
@@ -164,5 +165,64 @@ func TestNavidromeCommandPromptsAndSaves(t *testing.T) {
 	b2, _ := os.ReadFile(filepath.Join(home, "dotamp", "config.json"))
 	if string(b2) != string(b) {
 		t.Fatal("a failed check must not change the config")
+	}
+}
+
+func TestFirstRunWalksThroughSetup(t *testing.T) {
+	bin := build(t)
+	plex := fakePlex(t)
+	nd := fakeNavidromeServer(t)
+	home := t.TempDir()
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+home, "DOTAMP_PLEXTV="+plex.URL, "TERM=")
+	// Answers: sign in with Plex (yes), add Navidrome (yes), its URL, user, password.
+	cmd.Stdin = strings.NewReader("y\ny\n" + nd.URL + "\nbrady\nhunter2\n")
+	out, _ := cmd.CombinedOutput() // the player itself cannot open without a terminal; that failure is fine here
+	text := string(out)
+	for _, want := range []string{"Sign in with Plex", "app.plex.tv/auth", "testbox", "Navidrome", "0.60.3"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("setup output lacks %q:\n%s", want, text)
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(home, "dotamp", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	_ = json.Unmarshal(b, &cfg)
+	nav, _ := cfg["navidrome"].(map[string]any)
+	if cfg["account_token"] != "acct-token" || nav == nil || nav["user"] != "brady" {
+		t.Fatalf("config after setup = %s", b)
+	}
+}
+
+func TestFirstRunCanSkipPlex(t *testing.T) {
+	bin := build(t)
+	nd := fakeNavidromeServer(t)
+	home := t.TempDir()
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+home, "TERM=")
+	cmd.Stdin = strings.NewReader("n\ny\n" + nd.URL + "\nbrady\nhunter2\n")
+	out, _ := cmd.CombinedOutput()
+	if strings.Contains(string(out), "app.plex.tv") {
+		t.Fatalf("declining Plex must not start the login:\n%s", out)
+	}
+	b, _ := os.ReadFile(filepath.Join(home, "dotamp", "config.json"))
+	var cfg map[string]any
+	_ = json.Unmarshal(b, &cfg)
+	if _, has := cfg["account_token"]; has || cfg["navidrome"] == nil {
+		t.Fatalf("config = %s", b)
+	}
+}
+
+func TestFirstRunDecliningEverythingExplains(t *testing.T) {
+	bin := build(t)
+	home := t.TempDir()
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+home, "TERM=")
+	cmd.Stdin = strings.NewReader("n\nn\n")
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "dotamp login") {
+		t.Fatalf("expected a non-zero exit with the commands named:\n%s", out)
 	}
 }

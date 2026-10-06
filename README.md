@@ -14,23 +14,15 @@ With Go:
 
 Or take a prebuilt binary from the [releases](https://github.com/brady1408/dotamp/releases). Those are unsigned for now: macOS wants a right-click → Open on first launch, Windows SmartScreen wants "More info → Run anyway".
 
-## Sign in
+## First run
 
-    dotamp login
+    dotamp
 
-It prints a link to approve in your browser. From then on dotamp finds your servers through your Plex account: the LAN address at home, the public address when you're away, Plex's relay as a last resort. Nothing to configure.
+The first run asks two questions: sign in with Plex, and add a Navidrome or other Subsonic server. Say yes to either or both. Plex sign-in is a link to approve in your browser; from then on dotamp finds your servers through your account, the LAN address at home, the public address when you're away, Plex's relay as a last resort. Navidrome is a URL, a username and a password, asked once. Then the player opens.
 
-    dotamp servers
+Later, the same steps are available as commands: `dotamp login`, `dotamp navidrome URL USER`, and `dotamp servers` to list every server and how each one is reached.
 
-lists every server on the account and how each one is reached.
-
-## Navidrome
-
-dotamp also speaks the Subsonic API, so a Navidrome (or Airsonic, Gonic, …) library can sit beside Plex or stand alone:
-
-    dotamp navidrome http://192.168.1.20:4533 yourname
-
-It asks for the password once and saves the server as a second library. Search covers both, the Servers entry in the Library menu switches between them, and the queue can mix the two.
+With both kinds of library configured, search covers all of them, the Servers entry in the Library menu switches the one you browse, and the queue can mix them.
 
 ## Use
 
