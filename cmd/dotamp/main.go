@@ -199,18 +199,37 @@ func checkNavidrome(serverURL, user, pw string) (string, error) {
 	return subsonic.New(serverURL, user, pw).Version(ctx)
 }
 
-// setup is the first run: it asks which libraries to use and saves them.
+// setup is the first run: one question about which server you have, then
+// only the steps that apply.
 func setup() (config.Config, error) {
 	cfg, err := loadOrEmpty()
 	if err != nil {
 		return cfg, err
 	}
 	p := newPrompter()
-	fmt.Println("Welcome to dotamp. Let's find your music.")
+	fmt.Println("Welcome to dotamp. Which music server do you have?")
 	fmt.Println()
-	if ok, err := p.yes("Sign in with Plex?", true); err != nil {
-		return cfg, fmt.Errorf("no config at %s; run `dotamp login` or `dotamp navidrome URL USER`", config.Path())
-	} else if ok {
+	fmt.Println("  1) Plex")
+	fmt.Println("  2) Navidrome, or another Subsonic server")
+	fmt.Println("  3) Both")
+	fmt.Println()
+	choice, err := p.line("Choice [1/2/3]: ")
+	if err != nil {
+		return cfg, fmt.Errorf("no config at %s; run `dotamp login` for Plex or `dotamp navidrome URL USER` for Navidrome", config.Path())
+	}
+	var wantPlex, wantNavidrome bool
+	switch strings.ToLower(choice) {
+	case "1", "plex":
+		wantPlex = true
+	case "2", "navidrome", "subsonic":
+		wantNavidrome = true
+	case "3", "both":
+		wantPlex, wantNavidrome = true, true
+	default:
+		return cfg, fmt.Errorf("nothing configured. Later: `dotamp login` for Plex, `dotamp navidrome URL USER` for Navidrome, or edit %s", config.Path())
+	}
+	fmt.Println()
+	if wantPlex {
 		if err := signIn(&cfg); err != nil {
 			return cfg, err
 		}
@@ -224,15 +243,15 @@ func setup() (config.Config, error) {
 		cancel()
 		fmt.Println()
 	}
-	if ok, err := p.yes("Add a Navidrome or other Subsonic server?", false); err == nil && ok {
-		u, _ := p.line("  Server URL (e.g. http://192.168.1.20:4533): ")
-		user, _ := p.line("  Username: ")
-		pw, _ := p.password("  Password: ")
+	if wantNavidrome {
+		u, _ := p.line("Navidrome URL (e.g. http://192.168.1.20:4533): ")
+		user, _ := p.line("Username: ")
+		pw, _ := p.password("Password: ")
 		if version, err := checkNavidrome(u, user, pw); err != nil {
-			fmt.Printf("  Could not connect: %v\n", err)
+			fmt.Printf("Could not connect: %v\n", err)
 		} else {
 			cfg.Navidrome = &config.Navidrome{URL: strings.TrimRight(u, "/"), User: user, Password: pw}
-			fmt.Printf("  Connected to Navidrome (%s).\n", version)
+			fmt.Printf("Connected to Navidrome (%s).\n", version)
 		}
 		fmt.Println()
 	}

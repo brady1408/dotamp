@@ -175,11 +175,11 @@ func TestFirstRunWalksThroughSetup(t *testing.T) {
 	home := t.TempDir()
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+home, "DOTAMP_PLEXTV="+plex.URL, "TERM=")
-	// Answers: sign in with Plex (yes), add Navidrome (yes), its URL, user, password.
-	cmd.Stdin = strings.NewReader("y\ny\n" + nd.URL + "\nbrady\nhunter2\n")
+	// Answers: both, then Navidrome's URL, user, password.
+	cmd.Stdin = strings.NewReader("3\n" + nd.URL + "\nbrady\nhunter2\n")
 	out, _ := cmd.CombinedOutput() // the player itself cannot open without a terminal; that failure is fine here
 	text := string(out)
-	for _, want := range []string{"Sign in with Plex", "app.plex.tv/auth", "testbox", "Navidrome", "0.60.3"} {
+	for _, want := range []string{"Which music server", "app.plex.tv/auth", "testbox", "Navidrome", "0.60.3"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("setup output lacks %q:\n%s", want, text)
 		}
@@ -202,10 +202,10 @@ func TestFirstRunCanSkipPlex(t *testing.T) {
 	home := t.TempDir()
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+home, "TERM=")
-	cmd.Stdin = strings.NewReader("n\ny\n" + nd.URL + "\nbrady\nhunter2\n")
+	cmd.Stdin = strings.NewReader("2\n" + nd.URL + "\nbrady\nhunter2\n")
 	out, _ := cmd.CombinedOutput()
 	if strings.Contains(string(out), "app.plex.tv") {
-		t.Fatalf("declining Plex must not start the login:\n%s", out)
+		t.Fatalf("choosing Navidrome only must not start the Plex login:\n%s", out)
 	}
 	b, _ := os.ReadFile(filepath.Join(home, "dotamp", "config.json"))
 	var cfg map[string]any
@@ -220,7 +220,7 @@ func TestFirstRunDecliningEverythingExplains(t *testing.T) {
 	home := t.TempDir()
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+home, "TERM=")
-	cmd.Stdin = strings.NewReader("n\nn\n")
+	cmd.Stdin = strings.NewReader("\n")
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "dotamp login") {
 		t.Fatalf("expected a non-zero exit with the commands named:\n%s", out)
