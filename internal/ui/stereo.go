@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"math"
+
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -18,8 +20,8 @@ func (a *Analyzer) drawStereo(s tcell.Screen, r Rect) {
 	half := float64(side/2 - 1)
 	for i := range a.left {
 		l, rr := clamp1(a.left[i]), clamp1(a.right[i])
-		x := ox + int(l*half+0.5)
-		y := oy - int(rr*half+0.5)
+		x := ox + int(math.Round(l*half))
+		y := oy - int(math.Round(rr*half))
 		swing := int(max(abs1(l), abs1(rr)) * float64(dotH))
 		a.cv.Set(x, y, colorFor(swing, dotH, false))
 	}

@@ -93,3 +93,36 @@ func TestStereoSilenceIsAtMostACentreDot(t *testing.T) {
 		t.Fatalf("silence lit %d cells", len(pos))
 	}
 }
+
+// squareFake drives both channels between -1 and +1 together, so the
+// stereo field should light exactly the two far corners of the diagonal.
+type squareFake struct{}
+
+func (squareFake) Spectrum(n int, dst []float64) int { return n }
+func (squareFake) Rate() int                         { return 44100 }
+func (squareFake) Stereo(n int, l, r []float64) int {
+	for i := 0; i < n; i++ {
+		v := 1.0
+		if i%2 == 1 {
+			v = -1
+		}
+		l[i], r[i] = v, v
+	}
+	return n
+}
+
+func TestStereoCornersAreSymmetricAboutTheCentre(t *testing.T) {
+	s := sim(t, 4, 2)
+	a := NewAnalyzer(squareFake{})
+	a.SetMode(ModeStereo)
+	a.Update(4, 2) // 8x8 dots, centre (4,4), half 3
+	a.Draw(s, Rect{0, 0, 4, 2})
+	// +1,+1 lands at dot (7,1): cell (3,0), local (1,1), bit 0x10.
+	// -1,-1 lands at dot (1,7): cell (0,1), local (1,3), bit 0x80.
+	if ru, _ := a.cv.Cell(3, 0); ru&0x10 == 0 {
+		t.Fatalf("+1,+1 should light dot (7,1); cell (3,0) is %U", ru)
+	}
+	if ru, _ := a.cv.Cell(0, 1); ru&0x80 == 0 {
+		t.Fatalf("-1,-1 should light dot (1,7); cell (0,1) is %U", ru)
+	}
+}

@@ -132,3 +132,26 @@ func TestScopeFillsAWideWindow(t *testing.T) {
 		t.Fatalf("right edge is flat: top=%d bottom=%d lit cells in the last 40 columns", top, bottom)
 	}
 }
+
+// TestScopeRoundsNegativeSwingsLikePositiveOnes: a -1 sample must sit as
+// far below the centre as a +1 sample sits above it. Truncating toward
+// zero used to leave the bottom of the wave one dot short.
+func TestScopeRoundsNegativeSwingsLikePositiveOnes(t *testing.T) {
+	a := NewAnalyzer(silent{})
+	a.SetMode(ModeScope)
+	a.Update(4, 2) // 8 dots wide, 8 dots tall: centre row 4, swing 3
+	dotW := a.cv.DotW()
+	a.trace = make([]float64, dotW*scopeSamplesPerDot+scopeTriggerSearch)
+	a.trace[0] = -1 // the rising crossing is at index 1
+	for i := 1; i < len(a.trace); i++ {
+		if i < 1+scopeSamplesPerDot {
+			a.trace[i] = 1
+		} else {
+			a.trace[i] = -1
+		}
+	}
+	got := a.scopeTrace(dotW)
+	if got[0] != 1 || got[1] != 7 {
+		t.Fatalf("+1 should map to row 1 and -1 to row 7, got %d and %d", got[0], got[1])
+	}
+}

@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"math"
+
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -65,7 +67,7 @@ func (a *Analyzer) scopeTrace(dotW int) []int {
 		} else if v < -1 {
 			v = -1
 		}
-		y := centre - int(v*swing+0.5)
+		y := centre - int(math.Round(v*swing))
 		if y < 0 {
 			y = 0
 		}
