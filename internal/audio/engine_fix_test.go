@@ -202,3 +202,17 @@ func TestEngineDecodePanicBecomesError(t *testing.T) {
 }
 
 var _ io.Reader = (*reader)(nil)
+
+func TestEngineFormatFollowsTheAudibleSource(t *testing.T) {
+	out := &fakeOutput{}
+	e := NewEngine(out, OutRate)
+	defer e.Close()
+	if f := e.Format(); f != (Format{}) {
+		t.Fatalf("no source: %+v", f)
+	}
+	src, _ := NewFLAC(openFixture(t, "sine440-44k.flac"))
+	e.Play(src)
+	if f := e.Format(); f.SampleRate != 44100 || f.BitDepth != 16 || f.Codec != "flac" {
+		t.Fatalf("format = %+v", f)
+	}
+}

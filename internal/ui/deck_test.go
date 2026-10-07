@@ -91,3 +91,18 @@ func TestDrawDeckShowsTheAlbum(t *testing.T) {
 		t.Fatalf("row1 overflowed: %q", r[1])
 	}
 }
+
+func TestDeckPrefersDecodedFormatAndHidesUnknownBitrate(t *testing.T) {
+	s := sim(t, 80, 3)
+	// Server metadata says nothing; the decoder says 44.1k 16-bit at 978 kbps.
+	DrawDeck(s, Rect{0, 0, 80, 3}, DeckState{Codec: "flac", SampleRate: 44100, BitDepth: 16, Bitrate: 978})
+	s.Show()
+	if r := rows(s)[1]; !strings.Contains(r, "978k") {
+		t.Fatalf("row1 = %q", r)
+	}
+	DrawDeck(s, Rect{0, 0, 80, 3}, DeckState{Codec: "flac", SampleRate: 44100, BitDepth: 16})
+	s.Show()
+	if r := rows(s)[1]; strings.Contains(r, "0k") {
+		t.Fatalf("an unknown bitrate must not print as 0k: %q", r)
+	}
+}

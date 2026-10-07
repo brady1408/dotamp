@@ -332,6 +332,13 @@ func (a *App) Draw() {
 	if has {
 		st.Artist, st.Title, st.Album, st.Codec = cur.Artist, cur.Title, cur.Album, cur.Codec
 		st.SampleRate, st.BitDepth, st.Bitrate = cur.SampleRate, cur.BitDepth, cur.Bitrate
+		// What the decoder sees beats what the server remembered.
+		if f := a.eng.Format(); f.SampleRate > 0 {
+			st.Codec, st.SampleRate, st.BitDepth = f.Codec, f.SampleRate, f.BitDepth
+			if f.Bitrate > 0 {
+				st.Bitrate = f.Bitrate
+			}
+		}
 	}
 	if a.notice != "" && time.Now().Before(a.noticeUntil) {
 		st.Notice = a.notice

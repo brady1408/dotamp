@@ -145,3 +145,29 @@ func TestHTTPFileRangeAndSeek(t *testing.T) {
 		t.Fatalf("expected a second Range request after seek, got %v", ranges)
 	}
 }
+
+// The decoder knows the real format of what it plays; servers sometimes don't.
+func TestSourcesReportTheirFormat(t *testing.T) {
+	fl, err := NewFLAC(openFixture(t, "sine440-44k.flac"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := fl.Format()
+	if f.SampleRate != 44100 || f.BitDepth != 16 || f.Codec != "flac" {
+		t.Fatalf("flac format = %+v", f)
+	}
+	// The bitrate is derived from size and length rather than reported: a
+	// 2 s sine FLAC lands somewhere around 200 kbps. The point is non-zero
+	// and plausible.
+	if f.Bitrate < 100 || f.Bitrate > 400 {
+		t.Fatalf("flac bitrate = %d kbps, want ~200", f.Bitrate)
+	}
+	mp, err := NewMP3(openFixture(t, "sine440-48k.mp3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f = mp.Format()
+	if f.SampleRate != 48000 || f.BitDepth != 0 || f.Codec != "mp3" || f.Bitrate < 100 || f.Bitrate > 160 {
+		t.Fatalf("mp3 format = %+v", f)
+	}
+}

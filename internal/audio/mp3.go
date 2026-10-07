@@ -10,9 +10,10 @@ import (
 
 // go-mp3 always emits 16-bit little-endian stereo at the file's sample rate.
 type mp3Source struct {
-	rs  io.ReadSeekCloser
-	dec *mp3.Decoder
-	raw []byte
+	rs   io.ReadSeekCloser
+	dec  *mp3.Decoder
+	raw  []byte
+	size int64
 }
 
 func NewMP3(rs io.ReadSeekCloser) (Source, error) {
@@ -20,7 +21,11 @@ func NewMP3(rs io.ReadSeekCloser) (Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &mp3Source{rs: rs, dec: d}, nil
+	return &mp3Source{rs: rs, dec: d, size: sizeOf(rs)}, nil
+}
+
+func (s *mp3Source) Format() Format {
+	return Format{Codec: "mp3", SampleRate: s.dec.SampleRate(), Bitrate: kbps(s.size, s.Length())}
 }
 
 func (s *mp3Source) SampleRate() int { return s.dec.SampleRate() }

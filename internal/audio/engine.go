@@ -371,6 +371,16 @@ func (e *Engine) Playing() bool {
 	return e.playing
 }
 
+// Format is what the audible source is decoding, or zero when nothing plays.
+func (e *Engine) Format() Format {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.src == nil {
+		return Format{}
+	}
+	return e.src.Format()
+}
+
 func (e *Engine) Length() time.Duration {
 	e.mu.Lock()
 	defer e.mu.Unlock()

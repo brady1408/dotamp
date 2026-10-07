@@ -36,7 +36,10 @@ func (f *fakeSource) Seek(d time.Duration) error {
 	f.pos = int(d.Seconds() * float64(f.rate))
 	return nil
 }
-func (f *fakeSource) Interrupt()   {}
+func (f *fakeSource) Interrupt() {}
+func (f *fakeSource) Format() Format {
+	return Format{Codec: "fake", SampleRate: f.rate}
+}
 func (f *fakeSource) Close() error { f.closed = true; return nil }
 
 // fakeOutput lets the test pull bytes from the engine's reader on demand.

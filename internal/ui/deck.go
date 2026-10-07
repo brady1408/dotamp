@@ -74,10 +74,14 @@ func DrawDeck(s tcell.Screen, r Rect, st DeckState) {
 	if st.Notice != "" {
 		PutStr(s, r.X, r.Y+1, Fit(" "+st.Notice, r.W), base.Foreground(tcell.PaletteColor(11)))
 	} else {
-		info := fmt.Sprintf(" %s  %s  %dbit  %dk", strings.ToUpper(st.Codec), khz(st.SampleRate), st.BitDepth, st.Bitrate)
-		if st.BitDepth == 0 {
-			info = fmt.Sprintf(" %s  %s  %dk", strings.ToUpper(st.Codec), khz(st.SampleRate), st.Bitrate)
+		parts := []string{strings.ToUpper(st.Codec), khz(st.SampleRate)}
+		if st.BitDepth > 0 {
+			parts = append(parts, fmt.Sprintf("%dbit", st.BitDepth))
 		}
+		if st.Bitrate > 0 {
+			parts = append(parts, fmt.Sprintf("%dk", st.Bitrate))
+		}
+		info := " " + strings.Join(parts, "  ")
 		vol := volumeBar(st.Volume, 10)
 		flags := "  "
 		if st.Shuffle {

@@ -13,6 +13,7 @@ type flacSource struct {
 	rate   int
 	nch    int
 	scale  float32
+	size   int64     // bytes, when the reader knows
 	pend   []float32 // decoded but not yet handed out
 	skip   int       // frames to drop after a seek landed before the target
 	total  uint64
@@ -29,7 +30,12 @@ func NewFLAC(rs io.ReadSeekCloser) (Source, error) {
 		nch:   int(st.Info.NChannels),
 		scale: 1 / float32(int64(1)<<(st.Info.BitsPerSample-1)),
 		total: st.Info.NSamples,
+		size:  sizeOf(rs),
 	}, nil
+}
+
+func (s *flacSource) Format() Format {
+	return Format{Codec: "flac", SampleRate: s.rate, BitDepth: int(s.stream.Info.BitsPerSample), Bitrate: kbps(s.size, s.Length())}
 }
 
 func (s *flacSource) SampleRate() int { return s.rate }
