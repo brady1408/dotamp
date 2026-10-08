@@ -17,6 +17,7 @@ var helpLines = []string{
 	"w          save the queue as a playlist",
 	"x / c      remove the selected track / clear the queue",
 	"Backspace  back (Library)",
+	"Esc        back to the Library menu",
 	"A-Z / #    jump to letter (Artists)",
 	"s / r      shuffle / repeat",
 	"v          bars / scope / spectrogram / stereo",

@@ -299,3 +299,65 @@ func TestAlbumRowsGainAQualityTagOnce(t *testing.T) {
 		t.Fatalf("cached tag should apply at once: %q", r)
 	}
 }
+
+func TestSearchListsMatchingPlaylists(t *testing.T) {
+	b := NewBrowser(stubLib{}) // playlists: "Road Trip" (3) and "Empty" (0)
+	if err := b.Search(context.Background(), "trip"); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, r := range b.List().Rows {
+		if r.Playlist != nil {
+			names = append(names, r.Text+"|"+r.Right)
+		}
+	}
+	if len(names) != 1 || names[0] != "Road Trip|3" {
+		t.Fatalf("playlist rows = %v", names)
+	}
+	rows := b.List().Rows
+	if rows[len(rows)-2].Text != "Playlists" || !rows[len(rows)-2].Header {
+		t.Fatalf("the Playlists group comes last: %+v", rows[len(rows)-3:])
+	}
+	_ = b.Search(context.Background(), "ROAD") // case does not matter
+	found := false
+	for _, r := range b.List().Rows {
+		found = found || r.Playlist != nil
+	}
+	if !found {
+		t.Fatal("matching is case-insensitive")
+	}
+}
+
+func TestSearchGroupsPlaylistsByServer(t *testing.T) {
+	b := NewBrowser(taggedLib{}) // A: Road Trip, B: Theirs
+	b.SetSwitcher(twoServers())
+	_ = b.Search(context.Background(), "t")
+	var seq []string
+	for _, r := range b.List().Rows {
+		if r.Header && strings.HasPrefix(r.Text, "Playlists") {
+			seq = append(seq, r.Text)
+		}
+		if r.Playlist != nil {
+			seq = append(seq, r.Playlist.Name)
+		}
+	}
+	want := "Playlists — Ressikan,Road Trip,Playlists — Friend (relay),Theirs"
+	if strings.Join(seq, ",") != want {
+		t.Fatalf("got %q, want %q", strings.Join(seq, ","), want)
+	}
+}
+
+func TestHomeReturnsToTheRootMenu(t *testing.T) {
+	b := NewBrowser(stubLib{})
+	ctx := context.Background()
+	_ = b.LoadRoot(ctx)
+	_ = b.Search(ctx, "nsync")
+	_ = b.OpenAlbum(ctx, *b.List().Selected().Album)
+	_ = b.Search(ctx, "again")
+	if !b.Home(ctx) || b.Title() != "Library" || len(b.stack) != 1 {
+		t.Fatalf("home should drop every view: %q depth=%d", b.Title(), len(b.stack))
+	}
+	if b.Home(ctx) {
+		t.Fatal("home at the root reports nothing to do")
+	}
+}

@@ -240,6 +240,10 @@ func (a *App) key(ev *tcell.EventKey) bool {
 		if a.tab == tabLibrary {
 			a.browser.Back(ctx)
 		}
+	case ActEscape:
+		if a.tab == tabLibrary {
+			a.browser.Home(ctx)
+		}
 	case ActClear:
 		a.ctrl.Clear()
 		a.queue.Sel = 0

@@ -137,6 +137,16 @@ func (b *Browser) push(v view) {
 	b.stack = append(b.stack, v)
 }
 
+// Home drops every view above the root menu. It reports whether anything
+// was open.
+func (b *Browser) Home(context.Context) bool {
+	if len(b.stack) <= 1 {
+		return false
+	}
+	b.stack = b.stack[:1]
+	return true
+}
+
 func (b *Browser) Back(context.Context) bool {
 	if len(b.stack) <= 1 {
 		return false
@@ -371,6 +381,16 @@ func (b *Browser) Search(ctx context.Context, q string) error {
 	if err != nil {
 		return err
 	}
+	// Servers do not search playlists, so match their names here.
+	var playlists []library.Playlist
+	if ps, err := b.lib.Playlists(ctx); err == nil {
+		needle := strings.ToLower(q)
+		for _, p := range ps {
+			if strings.Contains(strings.ToLower(p.Name), needle) {
+				playlists = append(playlists, p)
+			}
+		}
+	}
 	// With several servers, each group is split per server so a copy on a
 	// friend's server reads as such.
 	servers := []string{""}
@@ -411,6 +431,13 @@ func (b *Browser) Search(ctx context.Context, q string) error {
 					text += "  ·  " + t.Album
 				}
 				rows = append(rows, Row{Text: text, Right: Clock(t.Duration), Track: t})
+			}
+		}
+		rows = append(rows, Row{Text: header("Playlists", sid), Header: true})
+		for i := range playlists {
+			p := &playlists[i]
+			if sid == "" || p.Server == sid {
+				rows = append(rows, Row{Text: p.Name, Right: fmt.Sprint(p.TrackCount), Playlist: p})
 			}
 		}
 	}

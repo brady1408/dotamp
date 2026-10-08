@@ -376,3 +376,19 @@ func TestRemoveKeyDropsTheSelectedQueueRowOnly(t *testing.T) {
 		t.Fatalf("x in the Library must not touch the queue: %+v", got)
 	}
 }
+
+func TestEscapeInTheLibraryGoesHome(t *testing.T) {
+	app, _, _ := newApp(t)
+	key(app, tcell.KeyTab, 0)
+	key(app, tcell.KeyRune, '/')
+	typeKeys(app, "nsync")
+	key(app, tcell.KeyEnter, 0)
+	key(app, tcell.KeyEnter, 0) // open the album
+	if app.browser.Title() == "Library" {
+		t.Fatal("precondition: a deeper view is open")
+	}
+	key(app, tcell.KeyEscape, 0)
+	if app.browser.Title() != "Library" {
+		t.Fatalf("escape should return to the root menu, got %q", app.browser.Title())
+	}
+}
