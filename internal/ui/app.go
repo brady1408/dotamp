@@ -240,6 +240,17 @@ func (a *App) key(ev *tcell.EventKey) bool {
 		if a.tab == tabLibrary {
 			a.browser.Back(ctx)
 		}
+	case ActClear:
+		a.ctrl.Clear()
+		a.queue.Sel = 0
+		a.setNotice("Queue cleared")
+	case ActRemove:
+		if a.tab == tabQueue && a.queue.Sel >= 0 && a.queue.Sel < len(a.queue.Rows) {
+			a.run(a.ctrl.Remove(ctx, a.queue.Sel))
+			if n := len(a.ctrl.Tracks()); a.queue.Sel >= n {
+				a.queue.Sel = max(n-1, 0)
+			}
+		}
 	case ActEnter:
 		a.activate(ctx, list.Selected(), false)
 	case ActAppend:
@@ -411,6 +422,9 @@ func (a *App) Draw() {
 	st := DeckState{
 		Playing: a.eng.Playing(), Position: a.eng.Position(), Length: a.eng.Length(),
 		Volume: a.eng.Volume(), Shuffle: a.ctrl.Shuffle(), Repeat: a.ctrl.Repeat(), Tick: a.tick,
+	}
+	if !has { // stopped with nothing queued: the clock reads idle, not the last track's length
+		st.Position, st.Length = 0, 0
 	}
 	if has {
 		st.Artist, st.Title, st.Album, st.Codec = cur.Artist, cur.Title, cur.Album, cur.Codec

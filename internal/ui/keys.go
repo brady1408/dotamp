@@ -29,6 +29,8 @@ const (
 	ActEscape
 	ActVisual
 	ActSave
+	ActClear
+	ActRemove
 )
 
 func ActionFor(ev *tcell.EventKey) Action {
@@ -81,6 +83,10 @@ func ActionFor(ev *tcell.EventKey) Action {
 			return ActVisual
 		case 'w':
 			return ActSave
+		case 'c':
+			return ActClear
+		case 'x':
+			return ActRemove
 		case 'j':
 			return ActDown
 		case 'k':

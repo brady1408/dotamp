@@ -153,6 +153,52 @@ func (c *Controller) PlayTracks(ctx context.Context, ts []library.Track, start i
 
 func (c *Controller) Enqueue(ts ...library.Track) { c.withQ(func(q *Queue) { q.Append(ts...) }) }
 
+// Clear empties the queue and stops playback.
+func (c *Controller) Clear() {
+	c.withQ(func(q *Queue) { q.Clear() })
+	c.discardPrefetch()
+	c.stopped()
+}
+
+// Remove drops the track at i from the queue. Removing the playing track
+// moves playback to the one that followed it, or stops when it was last.
+// A prefetched copy of the removed track is discarded so the gapless
+// handover cannot play it.
+func (c *Controller) Remove(ctx context.Context, i int) error {
+	var removed library.Track
+	var wasCurrent, wasLast, ok bool
+	c.withQ(func(q *Queue) {
+		if i >= 0 && i < len(q.Tracks()) {
+			removed, ok = q.Tracks()[i], true
+			wasCurrent, wasLast = q.Remove(i)
+		}
+	})
+	if !ok {
+		return nil
+	}
+	c.mu.Lock()
+	prefetched := c.nextID == removed.ID
+	c.mu.Unlock()
+	if prefetched {
+		c.discardPrefetch()
+	}
+	switch {
+	case wasCurrent && wasLast:
+		c.stopped()
+		return nil
+	case wasCurrent:
+		return c.start(ctx)
+	}
+	return nil
+}
+
+// discardPrefetch closes whatever source is queued in the engine.
+func (c *Controller) discardPrefetch() {
+	if src := c.takePrefetched(""); src != nil {
+		src.Close()
+	}
+}
+
 func (c *Controller) Next(ctx context.Context) error {
 	if !c.queueNext() {
 		c.eng.Stop()

@@ -344,3 +344,35 @@ func TestHelpLinesFitTheOverlay(t *testing.T) {
 		}
 	}
 }
+
+func TestClearKeyEmptiesTheQueueAndSaysSo(t *testing.T) {
+	app, s, _ := newApp(t)
+	_ = app.ctrl.PlayTracks(context.Background(), []library.Track{{ID: "300", Title: "x"}, {ID: "301", Title: "y"}}, 0)
+	key(app, tcell.KeyRune, 'c')
+	app.Draw()
+	if n := len(app.ctrl.Tracks()); n != 0 {
+		t.Fatalf("queue should be empty, has %d", n)
+	}
+	if r := rows(s); !strings.Contains(r[1], "Queue cleared") || !strings.Contains(r[0], "0:00 / 0:00") {
+		t.Fatalf("deck rows = %q / %q", r[0], r[1])
+	}
+}
+
+func TestRemoveKeyDropsTheSelectedQueueRowOnly(t *testing.T) {
+	app, _, _ := newApp(t)
+	_ = app.ctrl.PlayTracks(context.Background(), []library.Track{{ID: "300", Title: "x"}, {ID: "301", Title: "y"}, {ID: "302", Title: "z"}}, 0)
+	app.Draw()                 // the queue list is built on draw
+	key(app, tcell.KeyDown, 0) // select y
+	key(app, tcell.KeyRune, 'x')
+	if got := app.ctrl.Tracks(); len(got) != 2 || got[1].ID != "302" {
+		t.Fatalf("after x: %+v", got)
+	}
+	if cur, _ := app.ctrl.Current(); cur.ID != "300" {
+		t.Fatalf("playback must stay on x: %+v", cur)
+	}
+	key(app, tcell.KeyTab, 0) // Library
+	key(app, tcell.KeyRune, 'x')
+	if got := app.ctrl.Tracks(); len(got) != 2 {
+		t.Fatalf("x in the Library must not touch the queue: %+v", got)
+	}
+}

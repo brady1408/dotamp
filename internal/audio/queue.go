@@ -46,6 +46,27 @@ func (q *Queue) Append(ts ...library.Track) {
 
 func (q *Queue) Clear() { q.tracks, q.idx, q.order = nil, 0, nil }
 
+// Remove drops the track at i. It reports whether that was the current
+// track and, if so, whether it was the last in the list, in which case the
+// cursor moves back onto the new last track. Otherwise the cursor keeps
+// pointing at the same track, or at the one that followed the removed one.
+func (q *Queue) Remove(i int) (wasCurrent, wasLast bool) {
+	if i < 0 || i >= len(q.tracks) {
+		return false, false
+	}
+	wasCurrent = i == q.idx
+	wasLast = i == len(q.tracks)-1
+	q.tracks = append(q.tracks[:i], q.tracks[i+1:]...)
+	q.order = nil
+	if i < q.idx || (wasCurrent && wasLast) {
+		q.idx--
+	}
+	if q.idx < 0 {
+		q.idx = 0
+	}
+	return wasCurrent, wasCurrent && wasLast
+}
+
 func (q *Queue) Jump(i int) bool {
 	if i < 0 || i >= len(q.tracks) {
 		return false

@@ -15,6 +15,7 @@ var helpLines = []string{
 	"Enter      play track, or open album / playlist",
 	"a          add track, album or playlist to the queue",
 	"w          save the queue as a playlist",
+	"x / c      remove the selected track / clear the queue",
 	"Backspace  back (Library)",
 	"A-Z / #    jump to letter (Artists)",
 	"s / r      shuffle / repeat",

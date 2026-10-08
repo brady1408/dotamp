@@ -51,6 +51,7 @@ Run `dotamp`. The deck on top shows the track, its album and format, the clock a
 | Enter | open an artist, album or playlist; on a track, play its album or playlist from there |
 | `a` | add the album, playlist or track to the queue |
 | `w` | save the queue as a playlist |
+| `x` / `c` | remove the selected track from the queue / clear the queue |
 | Backspace | back |
 | `A`–`Z`, `#` | jump to a letter in the artist index |
 | `s` / `r` | shuffle / repeat |

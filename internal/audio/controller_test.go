@@ -123,3 +123,108 @@ func TestControllerSeekByClampsAtZero(t *testing.T) {
 		t.Fatalf("position = %v", p)
 	}
 }
+
+func TestQueueRemoveAdjustsTheCursor(t *testing.T) {
+	var q Queue
+	q.Replace([]library.Track{{ID: "a"}, {ID: "b"}, {ID: "c"}}, 1)
+	if cur, last := q.Remove(0); cur || last || q.Index() != 0 || len(q.Tracks()) != 2 {
+		t.Fatalf("removing before the cursor: cur=%v last=%v idx=%d n=%d", cur, last, q.Index(), len(q.Tracks()))
+	}
+	if cur, last := q.Remove(1); cur || last || q.Index() != 0 || q.Tracks()[0].ID != "b" {
+		t.Fatalf("removing after the cursor: cur=%v last=%v idx=%d", cur, last, q.Index())
+	}
+	q.Replace([]library.Track{{ID: "a"}, {ID: "b"}, {ID: "c"}}, 1)
+	if cur, last := q.Remove(1); !cur || last || q.Index() != 1 || q.Tracks()[1].ID != "c" {
+		t.Fatalf("removing the current track points at the next: cur=%v last=%v idx=%d", cur, last, q.Index())
+	}
+	q.Replace([]library.Track{{ID: "a"}, {ID: "b"}}, 1)
+	if cur, last := q.Remove(1); !cur || !last || q.Index() != 0 {
+		t.Fatalf("removing the current last track: cur=%v last=%v idx=%d", cur, last, q.Index())
+	}
+	if cur, last := q.Remove(5); cur || last || len(q.Tracks()) != 1 {
+		t.Fatal("an index out of range removes nothing")
+	}
+}
+
+func playing(t *testing.T) (*Controller, *fakeLib, *Engine, context.Context) {
+	t.Helper()
+	srv := fixtureServer(t)
+	lib := &fakeLib{url: srv.URL}
+	eng := NewEngine(&fakeOutput{}, OutRate)
+	t.Cleanup(eng.Close)
+	c := NewController(lib, eng, func(string) {})
+	ctx := context.Background()
+	ts := []library.Track{{ID: "a", Title: "A"}, {ID: "b", Title: "B"}, {ID: "c", Title: "C"}}
+	if err := c.PlayTracks(ctx, ts, 0); err != nil {
+		t.Fatal(err)
+	}
+	return c, lib, eng, ctx
+}
+
+func TestControllerClearStopsAndEmpties(t *testing.T) {
+	c, _, eng, _ := playing(t)
+	c.Clear()
+	if _, ok := c.Current(); ok || len(c.Tracks()) != 0 || c.Index() != -1 || eng.Playing() {
+		t.Fatalf("after clear: tracks=%d playing=%v", len(c.Tracks()), eng.Playing())
+	}
+}
+
+func TestControllerRemovePlayingTrackMovesOn(t *testing.T) {
+	c, lib, eng, ctx := playing(t)
+	if err := c.Remove(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	cur, ok := c.Current()
+	if !ok || cur.ID != "b" || c.Index() != 0 || len(c.Tracks()) != 2 || !eng.Playing() {
+		t.Fatalf("after removing a: cur=%+v ok=%v idx=%d n=%d", cur, ok, c.Index(), len(c.Tracks()))
+	}
+	if opens := lib.streamOpens(); opens[len(opens)-1] != "b" {
+		t.Fatalf("b should have been opened: %v", opens)
+	}
+}
+
+func TestControllerRemoveOtherTrackKeepsPlaying(t *testing.T) {
+	c, lib, eng, ctx := playing(t)
+	if err := c.Remove(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	cur, _ := c.Current()
+	if cur.ID != "a" || len(c.Tracks()) != 2 || !eng.Playing() || len(lib.streamOpens()) != 1 {
+		t.Fatalf("removing c must not touch playback: cur=%s n=%d opens=%v", cur.ID, len(c.Tracks()), lib.streamOpens())
+	}
+}
+
+func TestControllerRemoveLastPlayingTrackStops(t *testing.T) {
+	c, _, eng, ctx := playing(t)
+	_ = c.Jump(ctx, 2) // play c, the last
+	if err := c.Remove(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Current(); ok || eng.Playing() || len(c.Tracks()) != 2 || c.Index() != 1 {
+		t.Fatalf("removing the last playing track stops: n=%d idx=%d playing=%v", len(c.Tracks()), c.Index(), eng.Playing())
+	}
+}
+
+func TestControllerRemoveDropsAPrefetchedNext(t *testing.T) {
+	c, _, eng, ctx := playing(t)
+	c.maybePrefetch(ctx) // the fixture is 2 s long, so the next track is due already
+	if eng.PeekNext() == nil {
+		t.Fatal("b should be prefetched")
+	}
+	if err := c.Remove(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	nextID := c.nextID
+	c.mu.Unlock()
+	if eng.PeekNext() != nil || nextID != "" {
+		t.Fatalf("the prefetched b must be discarded: peek=%v nextID=%q", eng.PeekNext(), nextID)
+	}
+	c.maybePrefetch(ctx)
+	c.mu.Lock()
+	nextID = c.nextID
+	c.mu.Unlock()
+	if nextID != "c" {
+		t.Fatalf("the new next should be c, got %q", nextID)
+	}
+}
