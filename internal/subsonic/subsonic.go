@@ -424,6 +424,49 @@ func (c *Client) CreatePlaylist(ctx context.Context, name string, tracks []libra
 	return library.Playlist{}, fmt.Errorf("subsonic: created %q but the server does not list it", name)
 }
 
+func (c *Client) AddToPlaylist(ctx context.Context, id string, tracks []library.Track) error {
+	if len(tracks) == 0 {
+		return nil
+	}
+	q := url.Values{"playlistId": {id}}
+	for _, t := range tracks {
+		q.Add("songIdToAdd", t.ID)
+	}
+	_, err := c.call(ctx, "updatePlaylist", q)
+	return err
+}
+
+func (c *Client) RemoveFromPlaylist(ctx context.Context, id string, index int) error {
+	_, err := c.call(ctx, "updatePlaylist", url.Values{"playlistId": {id}, "songIndexToRemove": {strconv.Itoa(index)}})
+	return err
+}
+
+// MovePlaylistTrack rewrites the playlist's contents in the new order;
+// the Subsonic API has no move call, but createPlaylist with a playlistId
+// replaces the entry list.
+func (c *Client) MovePlaylistTrack(ctx context.Context, id string, from, to int) error {
+	ts, err := c.PlaylistTracks(ctx, id)
+	if err != nil {
+		return err
+	}
+	n := len(ts)
+	if from < 0 || from >= n || to < 0 || to >= n {
+		return fmt.Errorf("subsonic: playlist has %d entries", n)
+	}
+	if from == to {
+		return nil
+	}
+	moved := ts[from]
+	rest := append(append([]library.Track(nil), ts[:from]...), ts[from+1:]...)
+	ordered := append(append(append([]library.Track(nil), rest[:to]...), moved), rest[to:]...)
+	q := url.Values{"playlistId": {id}}
+	for _, t := range ordered {
+		q.Add("songId", t.ID)
+	}
+	_, err = c.call(ctx, "createPlaylist", q)
+	return err
+}
+
 func (c *Client) Stream(ctx context.Context, t library.Track) (library.Stream, error) {
 	bitrate := 0
 	if !c.local && c.remoteBitrate > 0 {

@@ -78,7 +78,13 @@ func fakeNavidrome(t *testing.T) (*httptest.Server, *[]*http.Request) {
 				w.Write(ok(nil))
 				return
 			}
-			w.Write(ok(map[string]any{"playlist": map[string]any{"id": "p9", "name": q.Get("name"), "songCount": len(q["songId"])}}))
+			id := "p9"
+			if q.Get("playlistId") != "" {
+				id = q.Get("playlistId")
+			}
+			w.Write(ok(map[string]any{"playlist": map[string]any{"id": id, "name": q.Get("name"), "songCount": len(q["songId"])}}))
+		case "/rest/updatePlaylist":
+			w.Write(ok(nil))
 		default:
 			http.NotFound(w, r)
 		}
@@ -249,5 +255,41 @@ func TestCreatePlaylistRejectsNoTracks(t *testing.T) {
 	c := New("http://127.0.0.1:9", "brady", "secret")
 	if _, err := c.CreatePlaylist(context.Background(), "Empty", nil); err == nil {
 		t.Fatal("an empty playlist must be an error before any request")
+	}
+}
+
+func TestAddAndRemoveUseUpdatePlaylist(t *testing.T) {
+	s, seen := fakeNavidrome(t)
+	c := New(s.URL, "brady", "secret")
+	if err := c.AddToPlaylist(context.Background(), "p1", []library.Track{{ID: "s7"}, {ID: "s8"}}); err != nil {
+		t.Fatal(err)
+	}
+	q := (*seen)[len(*seen)-1].URL.Query()
+	if (*seen)[len(*seen)-1].URL.Path != "/rest/updatePlaylist" || q.Get("playlistId") != "p1" || strings.Join(q["songIdToAdd"], ",") != "s7,s8" {
+		t.Fatalf("add query = %v", q)
+	}
+	if err := c.RemoveFromPlaylist(context.Background(), "p1", 1); err != nil {
+		t.Fatal(err)
+	}
+	q = (*seen)[len(*seen)-1].URL.Query()
+	if q.Get("playlistId") != "p1" || q.Get("songIndexToRemove") != "1" {
+		t.Fatalf("remove query = %v", q)
+	}
+}
+
+func TestMoveResendsTheReorderedList(t *testing.T) {
+	s, seen := fakeNavidrome(t)
+	c := New(s.URL, "brady", "secret")
+	// the fake's playlist is [s2, s1]; moving entry 1 to 0 gives [s1, s2]
+	if err := c.MovePlaylistTrack(context.Background(), "p1", 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	last := (*seen)[len(*seen)-1]
+	q := last.URL.Query()
+	if last.URL.Path != "/rest/createPlaylist" || q.Get("playlistId") != "p1" || strings.Join(q["songId"], ",") != "s1,s2" {
+		t.Fatalf("move = %s %v", last.URL.Path, q)
+	}
+	if err := c.MovePlaylistTrack(context.Background(), "p1", 0, 4); err == nil || !strings.Contains(err.Error(), "2 entries") {
+		t.Fatalf("out of range: %v", err)
 	}
 }
