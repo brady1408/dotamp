@@ -1,8 +1,17 @@
 #!/bin/sh
-# Re-records the README pictures. Needs vhs, ttyd, Chrome, ffmpeg, the Iosevka
-# font, and a configured library that has The Outfield's Play Deep. Run from
-# the repo root with a dotamp binary on PATH (make demo does both).
+# Re-records the README pictures. Drives `dotamp --silent` inside tmux,
+# records with asciinema, renders with agg (which draws braille itself, so
+# the dots tile at any line height), and converts single frames to PNG with
+# ffmpeg. Needs tmux, asciinema, agg, ffmpeg, the Iosevka font, a dotamp on
+# PATH, and a configured library that has Linkin Park's One More Light.
+# RENDER_ONLY=1 reuses the recordings in docs/*.cast.
 set -e
+cd "$(dirname "$0")/.."
+AGG="agg --font-family Iosevka --font-size 16 --line-height 1.2 --fps-cap 20 --idle-time-limit 100 -q"
+# bg, fg, then the 16 ANSI colours dotamp draws with
+THEME="141414,d4d4d4,000000,f85149,3fb950,d29922,58a6ff,bc8cff,39c5cf,c9d1d9,6e7681,ff7b72,56d364,e3b341,79c0ff,d2a8ff,56d4dd,ffffff"
+SIZE=140x26
+
 reset_visual() {
 	cfg="${XDG_CONFIG_HOME:-$HOME/.config}/dotamp/config.json"
 	[ -f "$HOME/Library/Application Support/dotamp/config.json" ] && cfg="$HOME/Library/Application Support/dotamp/config.json"
@@ -11,19 +20,51 @@ import json, sys
 p = sys.argv[1]; c = json.load(open(p)); c["visual"] = "bars"; json.dump(c, open(p, "w"), indent=2)
 PY
 }
-still() { ffmpeg -v error -y -ss "$2" -i "$1" -frames:v 1 "$3"; }
+keys() { tmux send-keys -t dotamp-demo "$@"; }
+record() { # start recording docs/$1.cast in a detached tmux session
+	rm -f "docs/$1.cast"
+	tmux kill-session -t dotamp-demo 2>/dev/null || true
+	tmux new-session -d -s dotamp-demo -x 140 -y 26 \
+		"asciinema rec --window-size $SIZE -c 'dotamp --silent' docs/$1.cast"
+}
+# search, open the album, play One More Light (track 9), show the Queue,
+# seek into the chorus: about 12 s
+open_track() {
+	sleep 3
+	keys / ; sleep 0.3; keys 'one more light' Enter; sleep 3
+	keys Enter; sleep 2
+	for _ in 1 2 3 4 5 6 7 8; do keys Down; sleep 0.1; done
+	keys Enter; sleep 1; keys Tab; sleep 0.5
+	for _ in 1 2 3 4 5 6 7 8 9 10; do keys Right; sleep 0.1; done
+}
+finish() { keys q; sleep 2; }
+still() { # still CAST SECONDS NAME
+	$AGG --theme "$THEME" --select "$2" --last-frame-duration 0.1 "docs/$1.cast" docs/_still.gif
+	ffmpeg -v error -y -i docs/_still.gif -frames:v 1 "docs/$3.png"
+	rm -f docs/_still.gif
+}
 
-reset_visual
-vhs docs/demo.tape
-still docs/demo.mp4 6 docs/search.png
-still docs/demo.mp4 16 docs/bars.png
-still docs/demo.mp4 39 docs/spectrogram.png
-still docs/demo.mp4 46 docs/stereo.png
+if [ -z "$RENDER_ONLY" ]; then
+	reset_visual
+	record demo
+	open_track
+	sleep 8                    # bars
+	keys v; sleep 8            # scope
+	keys v; sleep 12           # spectrogram
+	keys v; sleep 8            # stereo
+	finish
 
-reset_visual
-vhs docs/scope.tape
-still docs/scope.mp4 20 docs/scope.png
-ffmpeg -v error -y -ss 16 -t 6 -i docs/scope.mp4 \
-	-vf "fps=20,scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3" \
-	-loop 0 docs/scope.gif
-rm -f docs/demo.mp4 docs/scope.mp4
+	reset_visual
+	record scope
+	open_track
+	sleep 2
+	keys v; sleep 14           # scope, held for the clip
+	finish
+fi
+
+still demo 5 search
+still demo 18 bars
+still demo 38 spectrogram
+still demo 47 stereo
+still scope 22 scope
+$AGG --theme "$THEME" --select 17..23 --last-frame-duration 0.05 docs/scope.cast docs/scope.gif

@@ -107,7 +107,7 @@ On macOS 15 and later the terminal app needs Local Network access the first time
     make mac        # darwin/arm64
     make windows    # windows/amd64
     make test
-    make demo       # re-record the pictures in docs/ (needs vhs, ttyd, Chrome, Iosevka)
+    make demo       # re-record the pictures in docs/ (needs tmux, asciinema, agg, ffmpeg, Iosevka)
 
 Pure Go, no cgo, on every platform.
 
