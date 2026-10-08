@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 	"unicode"
 
@@ -29,6 +30,8 @@ type App struct {
 	queue   List
 	tab     int
 	search  SearchField
+	saver   Saver
+	saving  bool // the input field is the save prompt, not search
 	help    bool
 	tick    int
 
@@ -63,6 +66,14 @@ func New(s tcell.Screen, ctrl *audio.Controller, eng *audio.Engine, lib library.
 	_ = a.browser.LoadRoot(context.Background())
 	return a
 }
+
+// Saver saves a queue to the servers its tracks live on.
+type Saver interface {
+	SaveQueue(ctx context.Context, name string, tracks []library.Track) ([]library.Saved, error)
+}
+
+// SetSaver enables w, saving the queue as a playlist.
+func (a *App) SetSaver(s Saver) { a.saver = s }
 
 // SetSwitcher enables the Servers menu for a multi-server library.
 func (a *App) SetSwitcher(sw Switcher) {
@@ -134,8 +145,21 @@ func (a *App) Handle(ev tcell.Event) bool {
 func (a *App) key(ev *tcell.EventKey) bool {
 	ctx := context.Background()
 	if a.search.Open {
-		submit, _ := a.search.Key(ev)
-		if submit {
+		submit, cancel := a.search.Key(ev)
+		switch {
+		case a.saving && (submit || cancel):
+			a.saving, a.search.Label = false, ""
+			name := strings.TrimSpace(a.search.Text)
+			a.search.Text = ""
+			if ev.Key() == tcell.KeyEscape {
+				return false
+			}
+			if name == "" {
+				a.setNotice("No name, not saved")
+				return false
+			}
+			a.saveQueue(ctx, name)
+		case submit:
 			if err := a.browser.Search(ctx, a.search.Text); err != nil {
 				a.setNotice("Search failed: " + err.Error())
 			}
@@ -193,6 +217,17 @@ func (a *App) key(ev *tcell.EventKey) bool {
 	case ActSearch:
 		a.tab = tabLibrary
 		a.search.Open = true
+	case ActSave:
+		if a.saver == nil {
+			a.setNotice("Saving is not available")
+			return false
+		}
+		if len(a.ctrl.Tracks()) == 0 {
+			a.setNotice("Queue is empty")
+			return false
+		}
+		a.saving = true
+		a.search.Label, a.search.Text, a.search.Open = "Save queue as:", "", true
 	case ActUp:
 		list.Move(-1)
 	case ActDown:
@@ -211,6 +246,31 @@ func (a *App) key(ev *tcell.EventKey) bool {
 		a.activate(ctx, list.Selected(), true)
 	}
 	return false
+}
+
+func (a *App) saveQueue(ctx context.Context, name string) {
+	saved, err := a.saver.SaveQueue(ctx, name, a.ctrl.Tracks())
+	a.setNotice(saveNotice(name, saved, err, a.browser.serverLabel))
+	if len(saved) > 0 {
+		a.browser.ReloadPlaylists(ctx)
+	}
+}
+
+// saveNotice words the result of a save: every server that took it, then
+// the first failure if there was one.
+func saveNotice(name string, saved []library.Saved, err error, serverName func(string) string) string {
+	if len(saved) == 0 {
+		return "Save failed: " + err.Error()
+	}
+	parts := make([]string, len(saved))
+	for i, s := range saved {
+		parts[i] = fmt.Sprintf("%s (%d)", serverName(s.Server), s.Tracks)
+	}
+	out := "Saved " + name + " to " + strings.Join(parts, " and ")
+	if err != nil {
+		out += "; " + err.Error()
+	}
+	return out
 }
 
 func (a *App) run(err error) {

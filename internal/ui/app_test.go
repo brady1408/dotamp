@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -169,5 +170,145 @@ func TestAppPlaysAPlaylistFromItsSecondTrackAndAppendsOne(t *testing.T) {
 	}
 	if got := app.ctrl.Tracks(); len(got) != 2 || got[0].ID != "301" || got[1].ID != "300" {
 		t.Fatalf("playing a playlist replaces the queue with it in order: %+v", got)
+	}
+}
+
+type fakeSaver struct {
+	name  string
+	got   []library.Track
+	saved []library.Saved
+	err   error
+}
+
+func (f *fakeSaver) SaveQueue(_ context.Context, name string, ts []library.Track) ([]library.Saved, error) {
+	f.name, f.got = name, ts
+	return f.saved, f.err
+}
+
+func typeKeys(a *App, s string) {
+	for _, r := range s {
+		key(a, tcell.KeyRune, r)
+	}
+}
+
+func TestSaveQueuePromptsAndReportsEachServer(t *testing.T) {
+	app, s, _ := newApp(t)
+	sv := &fakeSaver{saved: []library.Saved{{Server: "A", Tracks: 2}, {Server: "B", Tracks: 1}}}
+	app.SetSaver(sv)
+	app.ctrl.Enqueue(library.Track{ID: "A:1", Server: "A"}, library.Track{ID: "B:1", Server: "B"}, library.Track{ID: "A:2", Server: "A"})
+	key(app, tcell.KeyRune, 'w')
+	app.Draw()
+	if r := strings.Join(rows(s), "\n"); !strings.Contains(r, "Save queue as:") {
+		t.Fatalf("prompt missing:\n%s", r)
+	}
+	typeKeys(app, "  Road Trip ")
+	key(app, tcell.KeyEnter, 0)
+	if sv.name != "Road Trip" || len(sv.got) != 3 || sv.got[1].ID != "B:1" {
+		t.Fatalf("saver got name=%q tracks=%+v", sv.name, sv.got)
+	}
+	app.Draw()
+	if r := rows(s); !strings.Contains(r[1], "Saved Road Trip to A (2) and B (1)") {
+		t.Fatalf("notice = %q", r[1])
+	}
+	if app.search.Open {
+		t.Fatal("prompt must close after saving")
+	}
+}
+
+func TestSaveQueueEmptyBlankAndEscape(t *testing.T) {
+	app, s, _ := newApp(t)
+	sv := &fakeSaver{}
+	app.SetSaver(sv)
+	key(app, tcell.KeyRune, 'w')
+	app.Draw()
+	if app.search.Open || !strings.Contains(rows(s)[1], "Queue is empty") {
+		t.Fatalf("empty queue: open=%v row1=%q", app.search.Open, rows(s)[1])
+	}
+	app.ctrl.Enqueue(library.Track{ID: "A:1", Server: "A"})
+	key(app, tcell.KeyRune, 'w')
+	key(app, tcell.KeyEnter, 0) // blank name
+	app.Draw()
+	if sv.got != nil || !strings.Contains(rows(s)[1], "No name, not saved") {
+		t.Fatalf("blank name: got=%v row1=%q", sv.got, rows(s)[1])
+	}
+	key(app, tcell.KeyRune, 'w')
+	typeKeys(app, "x")
+	key(app, tcell.KeyEscape, 0)
+	if sv.got != nil || app.search.Open || app.search.Text != "" {
+		t.Fatal("escape cancels without saving and clears the field")
+	}
+}
+
+func TestSaveQueuePartialAndTotalFailure(t *testing.T) {
+	app, s, _ := newApp(t)
+	sv := &fakeSaver{saved: []library.Saved{{Server: "B", Tracks: 1}}, err: errors.New("Mine failed: down")}
+	app.SetSaver(sv)
+	app.ctrl.Enqueue(library.Track{ID: "A:1", Server: "A"}, library.Track{ID: "B:1", Server: "B"})
+	key(app, tcell.KeyRune, 'w')
+	typeKeys(app, "Mix")
+	key(app, tcell.KeyEnter, 0)
+	app.Draw()
+	if r := rows(s)[1]; !strings.Contains(r, "Saved Mix to B (1); Mine failed: down") {
+		t.Fatalf("partial notice = %q", r)
+	}
+	sv.saved, sv.err = nil, errors.New("Mine failed: down")
+	key(app, tcell.KeyRune, 'w')
+	typeKeys(app, "Mix")
+	key(app, tcell.KeyEnter, 0)
+	app.Draw()
+	if r := rows(s)[1]; !strings.Contains(r, "Save failed: Mine failed: down") {
+		t.Fatalf("total notice = %q", r)
+	}
+}
+
+func TestSaveUsesServerNamesAndReloadsThePlaylistsView(t *testing.T) {
+	app, s, _ := newApp(t)
+	app.SetSwitcher(twoServers())
+	sv := &fakeSaver{saved: []library.Saved{{Server: "A", Tracks: 1}}}
+	app.SetSaver(sv)
+	app.ctrl.Enqueue(library.Track{ID: "A:1", Server: "A"})
+	key(app, tcell.KeyTab, 0)
+	key(app, tcell.KeyDown, 0)
+	key(app, tcell.KeyDown, 0)
+	key(app, tcell.KeyEnter, 0) // Playlists view open
+	key(app, tcell.KeyRune, 'w')
+	typeKeys(app, "Mix")
+	key(app, tcell.KeyEnter, 0)
+	app.Draw()
+	if r := rows(s)[1]; !strings.Contains(r, "Saved Mix to Ressikan (1)") {
+		t.Fatalf("notice = %q", r)
+	}
+	if app.browser.Title() != "Playlists" {
+		t.Fatalf("view = %q", app.browser.Title())
+	}
+}
+
+func TestSaveKeyWhileSearchingTypesIntoTheSearch(t *testing.T) {
+	app, _, _ := newApp(t)
+	app.SetSaver(&fakeSaver{})
+	app.ctrl.Enqueue(library.Track{ID: "A:1", Server: "A"})
+	key(app, tcell.KeyRune, '/')
+	key(app, tcell.KeyRune, 'w')
+	if app.search.Text != "w" || app.saving {
+		t.Fatalf("w inside the search box is text: %q saving=%v", app.search.Text, app.saving)
+	}
+}
+
+func TestSaveNoticeWording(t *testing.T) {
+	name := func(id string) string { return map[string]string{"A": "Mine", "B": "Friend"}[id] }
+	cases := []struct {
+		saved []library.Saved
+		err   error
+		want  string
+	}{
+		{[]library.Saved{{Server: "A", Tracks: 14}}, nil, "Saved Road Trip to Mine (14)"},
+		{[]library.Saved{{Server: "A", Tracks: 14}, {Server: "B", Tracks: 3}}, nil, "Saved Road Trip to Mine (14) and Friend (3)"},
+		{[]library.Saved{{Server: "B", Tracks: 3}}, errors.New("Mine failed: down"), "Saved Road Trip to Friend (3); Mine failed: down"},
+		{nil, errors.New("Mine failed: down"), "Save failed: Mine failed: down"},
+	}
+	for _, c := range cases {
+		if got := saveNotice("Road Trip", c.saved, c.err, name); got != c.want {
+			t.Errorf("got %q, want %q", got, c.want)
+		}
 	}
 }

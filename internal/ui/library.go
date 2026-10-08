@@ -64,6 +64,19 @@ func (b *Browser) serverName(id string) string {
 	return id
 }
 
+// serverLabel names a server for a notice: its name when known, else its id.
+func (b *Browser) serverLabel(id string) string {
+	if b.sw == nil {
+		return id
+	}
+	for _, s := range b.sw.Servers() {
+		if s.ID == id {
+			return s.Name
+		}
+	}
+	return id
+}
+
 type view struct {
 	title     string
 	list      List

@@ -3,8 +3,9 @@ package ui
 import "github.com/gdamore/tcell/v2"
 
 type SearchField struct {
-	Text string
-	Open bool
+	Text  string
+	Open  bool
+	Label string // drawn before the text; empty means the search's "/"
 }
 
 // Key feeds a key event to the field. submit is true on Enter with text,
@@ -29,5 +30,9 @@ func (f *SearchField) Key(ev *tcell.EventKey) (submit, cancel bool) {
 }
 
 func (f *SearchField) Draw(s tcell.Screen, r Rect) {
-	PutStr(s, r.X, r.Y, Fit(" / "+f.Text+"▏", r.W), tcell.StyleDefault.Bold(true))
+	label := " / "
+	if f.Label != "" {
+		label = " " + f.Label + " "
+	}
+	PutStr(s, r.X, r.Y, Fit(label+f.Text+"▏", r.W), tcell.StyleDefault.Bold(true))
 }

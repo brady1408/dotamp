@@ -9,8 +9,9 @@ var helpLines = []string{
 	"+ / -      volume",
 	"Tab        switch Queue / Library",
 	"/          search the library",
-	"Enter      play track, or play album",
-	"a          add track or album to the queue",
+	"Enter      play track, or open album / playlist",
+	"a          add track, album or playlist to the queue",
+	"w          save the queue as a playlist",
 	"Backspace  back (Library)",
 	"A-Z / #    jump to letter (Artists)",
 	"s / r      shuffle / repeat",
@@ -20,7 +21,7 @@ var helpLines = []string{
 }
 
 func DrawHelp(s tcell.Screen, r Rect) {
-	w := 44
+	w := 50
 	h := len(helpLines) + 2
 	x := r.X + max((r.W-w)/2, 0)
 	y := r.Y + max((r.H-h)/2, 0)
