@@ -51,6 +51,8 @@ Run `dotamp`. The deck on top shows the track, its album and format, the clock a
 | Enter | open an artist, album or playlist; on a track, play its album or playlist from there |
 | `a` | add the album, playlist or track to the queue |
 | `w` | save the queue as a playlist |
+| `t` | add the track, album or playlist to one of your playlists |
+| `x` / `[` / `]` | in a playlist: remove the track / move it up / move it down |
 | `x` / `c` | remove the selected track from the queue / clear the queue |
 | Backspace | back |
 | Esc | straight back to the Library menu |
@@ -62,7 +64,7 @@ Run `dotamp`. The deck on top shows the track, its album and format, the clock a
 
 The mouse works too: click the seek bar, double-click a row, scroll the lists.
 
-The Library opens on a menu: **Artists** is every artist on the current server with letter jumps, **Recently added** the latest albums, **Playlists** every playlist on every server, each saved queue included, and **Servers** appears when more than one server with music is reachable, your Navidrome, your Plex, and any Plex shared with you. Search always asks all of them and groups the results by server, marking copies that live on a remote or relayed server. Every album row carries a quality tag on the right, `FLAC 16/44.1` or `MP3 320k`, read from its first track a moment after the list appears, so two copies of an album read apart before you play either. Playlists whose names match the search are listed too. `w` saves the queue as a playlist on the server its tracks live on; a queue that mixes servers makes one playlist per server with the same name, and the notice says what went where.
+The Library opens on a menu: **Artists** is every artist on the current server with letter jumps, **Recently added** the latest albums, **Playlists** every playlist on every server, each saved queue included, and **Servers** appears when more than one server with music is reachable, your Navidrome, your Plex, and any Plex shared with you. Search always asks all of them and groups the results by server, marking copies that live on a remote or relayed server. Every album row carries a quality tag on the right, `FLAC 16/44.1` or `MP3 320k`, read from its first track a moment after the list appears, so two copies of an album read apart before you play either. Playlists whose names match the search are listed too. `w` saves the queue as a playlist on the server its tracks live on; a queue that mixes servers makes one playlist per server with the same name, and the notice says what went where. Inside a playlist, `x` removes the selected track on the server and `[` / `]` move it; `t` on any track, album or playlist adds it to a playlist you pick.
 
 Tracks play as the original file, FLAC included, with gapless transitions between tracks. A file that would not fit through Plex's relay is transcoded to MP3 320 on the way.
 
