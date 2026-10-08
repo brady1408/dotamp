@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/brady1408/dotamp/internal/library"
 )
 
 // fakeNavidrome checks the Subsonic auth on every call and answers the
@@ -61,6 +63,22 @@ func fakeNavidrome(t *testing.T) (*httptest.Server, *[]*http.Request) {
 			w.Write(ok(map[string]any{"artist": map[string]any{"id": q.Get("id"), "name": "*NSYNC", "album": []map[string]any{
 				{"id": "al1", "name": "No Strings Attached", "artist": "*NSYNC", "artistId": "ar1", "year": 2000, "songCount": 12},
 			}}}))
+		case "/rest/getPlaylists":
+			w.Write(ok(map[string]any{"playlists": map[string]any{"playlist": []map[string]any{
+				{"id": "p1", "name": "Road Trip", "songCount": 2, "owner": "brady"},
+				{"id": "p2", "name": "Tea & Toast — été", "songCount": 0, "owner": "brady"},
+			}}}))
+		case "/rest/getPlaylist":
+			w.Write(ok(map[string]any{"playlist": map[string]any{"id": q.Get("id"), "name": "Road Trip", "songCount": 2, "entry": []map[string]any{
+				{"id": "s2", "title": "It's Gonna Be Me", "album": "No Strings Attached", "albumId": "al1", "artist": "*NSYNC", "track": 2, "duration": 191, "suffix": "m4a", "bitRate": 256},
+				{"id": "s1", "title": "Bye Bye Bye", "album": "No Strings Attached", "albumId": "al1", "artist": "*NSYNC", "track": 1, "duration": 200, "suffix": "flac", "bitRate": 978},
+			}}}))
+		case "/rest/createPlaylist":
+			if q.Get("name") == "nobody" { // a server that creates but returns nothing
+				w.Write(ok(nil))
+				return
+			}
+			w.Write(ok(map[string]any{"playlist": map[string]any{"id": "p9", "name": q.Get("name"), "songCount": len(q["songId"])}}))
 		default:
 			http.NotFound(w, r)
 		}
@@ -175,5 +193,61 @@ func TestStreamRawOrTranscoded(t *testing.T) {
 	st, _ = c.Stream(context.Background(), tracks[0])
 	if st.Codec != "flac" {
 		t.Fatalf("local stays original: %+v", st)
+	}
+}
+
+func TestPlaylistsAndTheirTracks(t *testing.T) {
+	s, _ := fakeNavidrome(t)
+	c := New(s.URL, "brady", "secret")
+	c.SetServer("navidrome", "Navidrome")
+	ps, err := c.Playlists(context.Background())
+	if err != nil || len(ps) != 2 || ps[0].ID != "p1" || ps[0].TrackCount != 2 || ps[1].Name != "Tea & Toast — été" || ps[0].Server != "navidrome" {
+		t.Fatalf("playlists=%+v err=%v", ps, err)
+	}
+	ts, err := c.PlaylistTracks(context.Background(), "p1")
+	if err != nil || len(ts) != 2 || ts[0].ID != "s2" || ts[1].ID != "s1" || ts[0].Album != "No Strings Attached" || ts[1].Server != "navidrome" {
+		t.Fatalf("tracks=%+v err=%v", ts, err)
+	}
+}
+
+func TestCreatePlaylistRepeatsSongIDsInOrder(t *testing.T) {
+	s, seen := fakeNavidrome(t)
+	c := New(s.URL, "brady", "secret")
+	c.SetServer("navidrome", "Navidrome")
+	p, err := c.CreatePlaylist(context.Background(), "Tea & Toast — été", []library.Track{{ID: "s2"}, {ID: "s1"}})
+	if err != nil || p.ID != "p9" || p.Name != "Tea & Toast — été" || p.TrackCount != 2 || p.Server != "navidrome" {
+		t.Fatalf("playlist=%+v err=%v", p, err)
+	}
+	last := (*seen)[len(*seen)-1]
+	if last.URL.Path != "/rest/createPlaylist" {
+		t.Fatalf("last call = %s", last.URL.Path)
+	}
+	if ids := last.URL.Query()["songId"]; len(ids) != 2 || ids[0] != "s2" || ids[1] != "s1" {
+		t.Fatalf("songId = %v", ids)
+	}
+	if last.URL.Query().Get("name") != "Tea & Toast — été" {
+		t.Fatalf("name = %q", last.URL.Query().Get("name"))
+	}
+}
+
+func TestCreatePlaylistFallsBackToTheListing(t *testing.T) {
+	s, seen := fakeNavidrome(t)
+	c := New(s.URL, "brady", "secret")
+	// The fake returns no playlist for the name "nobody"; the client must
+	// then list playlists and find one by name. Our listing has no "nobody",
+	// so the result is an error that names the problem, not a panic.
+	_, err := c.CreatePlaylist(context.Background(), "nobody", []library.Track{{ID: "s1"}})
+	if err == nil || !strings.Contains(err.Error(), "nobody") {
+		t.Fatalf("err = %v", err)
+	}
+	if (*seen)[len(*seen)-1].URL.Path != "/rest/getPlaylists" {
+		t.Fatal("the client should have looked the playlist up by name")
+	}
+}
+
+func TestCreatePlaylistRejectsNoTracks(t *testing.T) {
+	c := New("http://127.0.0.1:9", "brady", "secret")
+	if _, err := c.CreatePlaylist(context.Background(), "Empty", nil); err == nil {
+		t.Fatal("an empty playlist must be an error before any request")
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -110,8 +111,12 @@ type envelope struct {
 		AlbumList2 *struct {
 			Album []album `json:"album"`
 		} `json:"albumList2"`
-		Album  *album  `json:"album"`
-		Artist *artist `json:"artist"`
+		Album     *album  `json:"album"`
+		Artist    *artist `json:"artist"`
+		Playlists *struct {
+			Playlist []playlist `json:"playlist"`
+		} `json:"playlists"`
+		Playlist *playlist `json:"playlist"`
 	} `json:"subsonic-response"`
 }
 
@@ -146,6 +151,13 @@ type song struct {
 	Suffix       string `json:"suffix"`
 	SamplingRate int    `json:"samplingRate"`
 	BitDepth     int    `json:"bitDepth"`
+}
+
+type playlist struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	SongCount int    `json:"songCount"`
+	Entry     []song `json:"entry"`
 }
 
 func (c *Client) call(ctx context.Context, method string, q url.Values) (*envelope, error) {
@@ -347,6 +359,71 @@ func (c *Client) ArtistAlbums(ctx context.Context, artistID string) ([]library.A
 
 // Stream serves the original file when dotamp can decode it and the
 // connection allows, and otherwise asks the server for an MP3.
+func (c *Client) toPlaylist(p playlist) library.Playlist {
+	return library.Playlist{ID: p.ID, Name: p.Name, TrackCount: p.SongCount, Server: c.serverID}
+}
+
+func (c *Client) Playlists(ctx context.Context) ([]library.Playlist, error) {
+	env, err := c.call(ctx, "getPlaylists", nil)
+	if err != nil {
+		return nil, err
+	}
+	var out []library.Playlist
+	if env.Response.Playlists != nil {
+		for _, p := range env.Response.Playlists.Playlist {
+			out = append(out, c.toPlaylist(p))
+		}
+	}
+	return out, nil
+}
+
+func (c *Client) PlaylistTracks(ctx context.Context, id string) ([]library.Track, error) {
+	env, err := c.call(ctx, "getPlaylist", url.Values{"id": {id}})
+	if err != nil {
+		return nil, err
+	}
+	if env.Response.Playlist == nil {
+		return nil, fmt.Errorf("subsonic: playlist %s not found", id)
+	}
+	ts := make([]library.Track, 0, len(env.Response.Playlist.Entry))
+	for _, s := range env.Response.Playlist.Entry {
+		ts = append(ts, c.toTrack(s, nil))
+	}
+	return ts, nil
+}
+
+// CreatePlaylist makes a playlist of tracks in order. Servers answer with
+// the playlist; one that does not is asked for its listing and the newest
+// playlist of that name is taken.
+func (c *Client) CreatePlaylist(ctx context.Context, name string, tracks []library.Track) (library.Playlist, error) {
+	if len(tracks) == 0 {
+		return library.Playlist{}, errors.New("subsonic: a playlist needs at least one track")
+	}
+	q := url.Values{"name": {name}}
+	for _, t := range tracks {
+		q.Add("songId", t.ID)
+	}
+	env, err := c.call(ctx, "createPlaylist", q)
+	if err != nil {
+		return library.Playlist{}, err
+	}
+	if env.Response.Playlist != nil {
+		p := c.toPlaylist(*env.Response.Playlist)
+		p.TrackCount = len(tracks)
+		return p, nil
+	}
+	ps, err := c.Playlists(ctx)
+	if err != nil {
+		return library.Playlist{}, err
+	}
+	for i := len(ps) - 1; i >= 0; i-- {
+		if ps[i].Name == name {
+			return ps[i], nil
+		}
+	}
+	return library.Playlist{}, fmt.Errorf("subsonic: created %q but the server does not list it", name)
+}
+
 func (c *Client) Stream(ctx context.Context, t library.Track) (library.Stream, error) {
 	bitrate := 0
 	if !c.local && c.remoteBitrate > 0 {
