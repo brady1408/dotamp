@@ -48,8 +48,9 @@ Run `dotamp`. The deck on top shows the track, its album and format, the clock a
 | `+` / `-` | volume |
 | Tab | switch Queue / Library |
 | `/` | search every server at once |
-| Enter | open an artist or album; on a track, play its album from there |
-| `a` | add the album or track to the queue |
+| Enter | open an artist, album or playlist; on a track, play its album or playlist from there |
+| `a` | add the album, playlist or track to the queue |
+| `w` | save the queue as a playlist |
 | Backspace | back |
 | `A`–`Z`, `#` | jump to a letter in the artist index |
 | `s` / `r` | shuffle / repeat |
@@ -59,7 +60,7 @@ Run `dotamp`. The deck on top shows the track, its album and format, the clock a
 
 The mouse works too: click the seek bar, double-click a row, scroll the lists.
 
-The Library opens on a menu: **Artists** is every artist on the current server with letter jumps, **Recently added** the latest albums, and **Servers** appears when more than one server with music is reachable, your Navidrome, your Plex, and any Plex shared with you. Search always asks all of them and groups the results by server, marking copies that live on a remote or relayed server.
+The Library opens on a menu: **Artists** is every artist on the current server with letter jumps, **Recently added** the latest albums, **Playlists** every playlist on every server, each saved queue included, and **Servers** appears when more than one server with music is reachable, your Navidrome, your Plex, and any Plex shared with you. Search always asks all of them and groups the results by server, marking copies that live on a remote or relayed server. `w` saves the queue as a playlist on the server its tracks live on; a queue that mixes servers makes one playlist per server with the same name, and the notice says what went where.
 
 Tracks play as the original file, FLAC included, with gapless transitions between tracks. A file that would not fit through Plex's relay is transcoded to MP3 320 on the way.
 

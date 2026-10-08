@@ -587,6 +587,7 @@ func run(debugLog, silent bool) (err error) {
 		_ = config.Save(cfg)
 	})
 	app.SetSwitcher(lib)
+	app.SetSaver(lib)
 	app.SetVisual(cfg.Visual)
 	app.OnVisual = func(name string) {
 		cfg.Visual = name

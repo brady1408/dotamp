@@ -66,7 +66,8 @@ func fakePlex(t *testing.T) *httptest.Server {
 		}
 		_, _ = w.Write([]byte(`{"MediaContainer":{"machineIdentifier":"tb"}}`))
 	})
-	s = httptest.NewServer(mux)
+	s = httptest.NewUnstartedServer(mux) // assigned before Start, so handlers may read s.URL
+	s.Start()
 	t.Cleanup(s.Close)
 	return s
 }
