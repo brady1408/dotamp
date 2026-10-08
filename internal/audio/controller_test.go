@@ -35,6 +35,13 @@ func (f *fakeLib) Artists(context.Context, int, int) ([]library.Artist, int, err
 	return nil, 0, nil
 }
 func (f *fakeLib) ArtistIndex(context.Context) ([]library.Letter, error) { return nil, nil }
+func (f *fakeLib) Playlists(context.Context) ([]library.Playlist, error) { return nil, nil }
+func (f *fakeLib) PlaylistTracks(context.Context, string) ([]library.Track, error) {
+	return nil, nil
+}
+func (f *fakeLib) CreatePlaylist(context.Context, string, []library.Track) (library.Playlist, error) {
+	return library.Playlist{}, nil
+}
 func (f *fakeLib) Stream(_ context.Context, t library.Track) (library.Stream, error) {
 	f.mu.Lock()
 	f.opens = append(f.opens, t.ID)

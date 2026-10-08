@@ -23,7 +23,14 @@ func (stubLib) AlbumTracks(_ context.Context, id string) ([]library.Track, error
 }
 func (stubLib) Artists(context.Context, int, int) ([]library.Artist, int, error) { return nil, 0, nil }
 func (stubLib) ArtistIndex(context.Context) ([]library.Letter, error)            { return nil, nil }
-func (stubLib) ArtistAlbums(context.Context, string) ([]library.Album, error)    { return nil, nil }
+func (stubLib) Playlists(context.Context) ([]library.Playlist, error)            { return nil, nil }
+func (stubLib) PlaylistTracks(context.Context, string) ([]library.Track, error) {
+	return nil, nil
+}
+func (stubLib) CreatePlaylist(context.Context, string, []library.Track) (library.Playlist, error) {
+	return library.Playlist{}, nil
+}
+func (stubLib) ArtistAlbums(context.Context, string) ([]library.Album, error) { return nil, nil }
 func (stubLib) Stream(context.Context, library.Track) (library.Stream, error) {
 	return library.Stream{}, nil
 }

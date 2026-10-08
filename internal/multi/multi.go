@@ -242,3 +242,141 @@ func (m *Library) Stream(ctx context.Context, t library.Track) (library.Stream, 
 	}
 	return l.Stream(ctx, t)
 }
+
+func tagPlaylist(sid string, p library.Playlist) library.Playlist {
+	p.ID, p.Server = qualify(sid, p.ID), sid
+	return p
+}
+
+// Playlists asks every server and lists what answers, in registered order.
+func (m *Library) Playlists(ctx context.Context) ([]library.Playlist, error) {
+	m.mu.RLock()
+	ids := append([]string(nil), m.order...)
+	libs := make([]library.Library, len(ids))
+	for i, id := range ids {
+		libs[i] = m.libs[id]
+	}
+	m.mu.RUnlock()
+	if len(ids) == 0 {
+		return nil, errors.New("multi: no servers")
+	}
+	results := make([][]library.Playlist, len(ids))
+	errs := make([]error, len(ids))
+	var wg sync.WaitGroup
+	for i := range ids {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i], errs[i] = libs[i].Playlists(ctx)
+		}(i)
+	}
+	wg.Wait()
+	var out []library.Playlist
+	failed := 0
+	for i, sid := range ids {
+		if errs[i] != nil {
+			failed++
+			continue
+		}
+		for _, p := range results[i] {
+			out = append(out, tagPlaylist(sid, p))
+		}
+	}
+	if failed == len(ids) {
+		return nil, fmt.Errorf("multi: every server failed: %v", errs[0])
+	}
+	return out, nil
+}
+
+func (m *Library) PlaylistTracks(ctx context.Context, id string) ([]library.Track, error) {
+	sid, raw := split(id, m.Current().ID)
+	l, err := m.lib(sid)
+	if err != nil {
+		return nil, err
+	}
+	tracks, err := l.PlaylistTracks(ctx, raw)
+	for i := range tracks {
+		tracks[i] = tagTrack(sid, tracks[i])
+	}
+	return tracks, err
+}
+
+// CreatePlaylist routes to the one server every track belongs to.
+func (m *Library) CreatePlaylist(ctx context.Context, name string, tracks []library.Track) (library.Playlist, error) {
+	if len(tracks) == 0 {
+		return library.Playlist{}, errors.New("multi: a playlist needs at least one track")
+	}
+	sid := serverOf(tracks[0], m.Current().ID)
+	raw := make([]library.Track, len(tracks))
+	for i, t := range tracks {
+		if serverOf(t, m.Current().ID) != sid {
+			return library.Playlist{}, errors.New("multi: tracks from several servers; use SaveQueue")
+		}
+		_, t.ID = split(t.ID, sid)
+		raw[i] = t
+	}
+	l, err := m.lib(sid)
+	if err != nil {
+		return library.Playlist{}, err
+	}
+	p, err := l.CreatePlaylist(ctx, name, raw)
+	if err != nil {
+		return library.Playlist{}, err
+	}
+	return tagPlaylist(sid, p), nil
+}
+
+// SaveQueue makes one playlist per server, named name, each holding that
+// server's tracks in queue order. Servers go in registered order; a server
+// that fails is reported in the error as "<name> failed: <reason>" and the
+// rest still save. Only the first error is returned.
+func (m *Library) SaveQueue(ctx context.Context, name string, tracks []library.Track) ([]library.Saved, error) {
+	if len(tracks) == 0 {
+		return nil, errors.New("multi: the queue is empty")
+	}
+	cur := m.Current().ID
+	groups := map[string][]library.Track{}
+	for _, t := range tracks {
+		sid := serverOf(t, cur)
+		groups[sid] = append(groups[sid], t)
+	}
+	m.mu.RLock()
+	order := append([]string(nil), m.order...)
+	names := map[string]string{}
+	for id, s := range m.servers {
+		names[id] = s.Name
+	}
+	m.mu.RUnlock()
+	// unknown servers come last so their failure does not hide real saves
+	for sid := range groups {
+		if _, known := names[sid]; !known {
+			order = append(order, sid)
+			names[sid] = sid
+		}
+	}
+	var saved []library.Saved
+	var first error
+	for _, sid := range order {
+		ts, ok := groups[sid]
+		if !ok {
+			continue
+		}
+		p, err := m.CreatePlaylist(ctx, name, ts)
+		if err != nil {
+			if first == nil {
+				first = fmt.Errorf("%s failed: %w", names[sid], err)
+			}
+			continue
+		}
+		saved = append(saved, library.Saved{Server: sid, Playlist: p, Tracks: len(ts)})
+	}
+	return saved, first
+}
+
+func serverOf(t library.Track, fallback string) string {
+	if t.Server != "" {
+		return t.Server
+	}
+	sid, _ := split(t.ID, fallback)
+	return sid
+}

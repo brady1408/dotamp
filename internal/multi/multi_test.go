@@ -3,6 +3,7 @@ package multi
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/brady1408/dotamp/internal/library"
@@ -14,6 +15,29 @@ type fake struct {
 	tracks map[string][]library.Track
 	calls  []string
 	fail   bool
+}
+
+func (f *fake) Playlists(context.Context) ([]library.Playlist, error) {
+	f.calls = append(f.calls, "playlists")
+	if f.fail {
+		return nil, errors.New("down")
+	}
+	return []library.Playlist{{ID: "p-" + f.id, Name: "List " + f.id, TrackCount: 1, Server: f.id}}, nil
+}
+func (f *fake) PlaylistTracks(_ context.Context, id string) ([]library.Track, error) {
+	f.calls = append(f.calls, "ptracks:"+id)
+	return []library.Track{{ID: "t1", Server: f.id}}, nil
+}
+func (f *fake) CreatePlaylist(_ context.Context, name string, ts []library.Track) (library.Playlist, error) {
+	ids := make([]string, len(ts))
+	for i, t := range ts {
+		ids[i] = t.ID
+	}
+	f.calls = append(f.calls, "create:"+name+":"+strings.Join(ids, ","))
+	if f.fail {
+		return library.Playlist{}, errors.New("down")
+	}
+	return library.Playlist{ID: "new-" + f.id, Name: name, TrackCount: len(ts), Server: f.id}, nil
 }
 
 func (f *fake) tag(a library.Artist) library.Artist { a.Server = f.id; return a }
@@ -132,5 +156,71 @@ func TestQualifiedIDsRoundTrip(t *testing.T) {
 	_, _ = m.ArtistAlbums(context.Background(), res.Artists[0].ID)
 	if a.calls[len(a.calls)-1] != "albums:a-A" {
 		t.Fatalf("the raw id must reach the server: %v", a.calls)
+	}
+}
+
+func TestPlaylistsFanOutAndQualify(t *testing.T) {
+	a, b := &fake{id: "A"}, &fake{id: "B", fail: true}
+	m := New()
+	m.Add(Server{ID: "A", Name: "Mine"}, a)
+	m.Add(Server{ID: "B", Name: "Friend"}, b)
+	ps, err := m.Playlists(context.Background())
+	if err != nil || len(ps) != 1 || ps[0].ID != "A:p-A" || ps[0].Server != "A" {
+		t.Fatalf("playlists=%+v err=%v", ps, err)
+	}
+	b.fail = false
+	ps, _ = m.Playlists(context.Background())
+	if len(ps) != 2 || ps[1].ID != "B:p-B" {
+		t.Fatalf("both servers, in registered order: %+v", ps)
+	}
+	a.fail, b.fail = true, true
+	if _, err := m.Playlists(context.Background()); err == nil {
+		t.Fatal("every server failing is an error")
+	}
+	ts, err := m.PlaylistTracks(context.Background(), "B:p-B")
+	if err != nil || len(ts) != 1 || ts[0].ID != "B:t1" || b.calls[len(b.calls)-1] != "ptracks:p-B" {
+		t.Fatalf("tracks=%+v err=%v calls=%v", ts, err, b.calls)
+	}
+}
+
+func TestSaveQueueMakesOnePlaylistPerServer(t *testing.T) {
+	a, b := &fake{id: "A"}, &fake{id: "B"}
+	m := New()
+	m.Add(Server{ID: "A", Name: "Mine"}, a)
+	m.Add(Server{ID: "B", Name: "Friend"}, b)
+	queue := []library.Track{{ID: "B:1", Server: "B"}, {ID: "A:1", Server: "A"}, {ID: "B:2", Server: "B"}, {ID: "A:2", Server: "A"}}
+	saved, err := m.SaveQueue(context.Background(), "Mix", queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved) != 2 || saved[0].Server != "A" || saved[0].Tracks != 2 || saved[1].Server != "B" || saved[1].Tracks != 2 {
+		t.Fatalf("saved = %+v", saved)
+	}
+	if saved[0].Playlist.ID != "A:new-A" || saved[0].Playlist.Name != "Mix" {
+		t.Fatalf("playlist ids must be qualified: %+v", saved[0].Playlist)
+	}
+	if a.calls[len(a.calls)-1] != "create:Mix:1,2" || b.calls[len(b.calls)-1] != "create:Mix:1,2" {
+		t.Fatalf("raw ids in queue order must reach each server: %v %v", a.calls, b.calls)
+	}
+}
+
+func TestSaveQueueReportsAFailingServerAndKeepsTheRest(t *testing.T) {
+	a, b := &fake{id: "A", fail: true}, &fake{id: "B"}
+	m := New()
+	m.Add(Server{ID: "A", Name: "Mine"}, a)
+	m.Add(Server{ID: "B", Name: "Friend"}, b)
+	queue := []library.Track{{ID: "A:1", Server: "A"}, {ID: "B:1", Server: "B"}, {ID: "Z:1", Server: "Z"}}
+	saved, err := m.SaveQueue(context.Background(), "Mix", queue)
+	if len(saved) != 1 || saved[0].Server != "B" {
+		t.Fatalf("B alone should succeed: %+v", saved)
+	}
+	if err == nil || !strings.Contains(err.Error(), "Mine failed: down") {
+		t.Fatalf("the first failure names the server: %v", err)
+	}
+	if _, err := m.SaveQueue(context.Background(), "Mix", nil); err == nil {
+		t.Fatal("an empty queue is an error")
+	}
+	if _, err := m.CreatePlaylist(context.Background(), "x", []library.Track{{ID: "A:1", Server: "A"}, {ID: "B:1", Server: "B"}}); err == nil {
+		t.Fatal("CreatePlaylist on mixed servers must refuse")
 	}
 }

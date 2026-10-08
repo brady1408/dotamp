@@ -29,6 +29,13 @@ func (b *bigLib) Artists(_ context.Context, offset, limit int) ([]library.Artist
 func (b *bigLib) ArtistIndex(context.Context) ([]library.Letter, error) {
 	return []library.Letter{{Letter: "#", Count: 50}, {Letter: "A", Count: 200}, {Letter: "B", Count: 250}}, nil
 }
+func (b *bigLib) Playlists(context.Context) ([]library.Playlist, error) { return nil, nil }
+func (b *bigLib) PlaylistTracks(context.Context, string) ([]library.Track, error) {
+	return nil, nil
+}
+func (b *bigLib) CreatePlaylist(context.Context, string, []library.Track) (library.Playlist, error) {
+	return library.Playlist{}, nil
+}
 
 func TestBrowserRootMenuOpensArtistsLazily(t *testing.T) {
 	lib := &bigLib{}

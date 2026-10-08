@@ -67,5 +67,12 @@ type Library interface {
 	Artists(ctx context.Context, offset, limit int) ([]Artist, int, error)
 	// ArtistIndex returns the first letters artists sort under, in sort order.
 	ArtistIndex(ctx context.Context) ([]Letter, error)
+	// Playlists lists the user's playlists in the server's order.
+	Playlists(ctx context.Context) ([]Playlist, error)
+	// PlaylistTracks returns a playlist's tracks in playlist order.
+	PlaylistTracks(ctx context.Context, playlistID string) ([]Track, error)
+	// CreatePlaylist makes a new playlist holding tracks, in order, and
+	// returns it. Every track must belong to this library.
+	CreatePlaylist(ctx context.Context, name string, tracks []Track) (Playlist, error)
 	Stream(ctx context.Context, t Track) (Stream, error)
 }
