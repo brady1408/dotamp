@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"time"
 	"unicode"
 
@@ -232,6 +233,8 @@ func (a *App) activate(ctx context.Context, row *Row, appendOnly bool) {
 		a.run(a.browser.LoadRecent(ctx))
 	case row.Menu == MenuServers:
 		a.run(a.browser.OpenServers(ctx))
+	case row.Menu == MenuPlaylists:
+		a.run(a.browser.OpenPlaylists(ctx))
 	case row.ServerID != "":
 		if a.browser.SwitchServer(ctx, row.ServerID) {
 			a.setNotice("Browsing " + a.browser.CurrentServerName())
@@ -251,6 +254,18 @@ func (a *App) activate(ctx context.Context, row *Row, appendOnly bool) {
 			}
 		}
 		a.run(a.ctrl.PlayTracks(ctx, []library.Track{*row.Track}, 0))
+	case row.Playlist != nil:
+		if appendOnly {
+			ts, err := a.browser.PlaylistTracks(ctx, *row.Playlist)
+			if err != nil {
+				a.setNotice("Playlist failed: " + err.Error())
+				return
+			}
+			a.ctrl.Enqueue(ts...)
+			a.setNotice(fmt.Sprintf("Added %s (%d)", row.Playlist.Name, len(ts)))
+			return
+		}
+		a.run(a.browser.OpenPlaylist(ctx, *row.Playlist))
 	case row.Album != nil:
 		if appendOnly {
 			ts, err := a.browser.AlbumTracks(ctx, *row.Album)

@@ -29,7 +29,7 @@ func TestRootMenuListsServersAndSwitches(t *testing.T) {
 	for _, r := range b.List().Rows {
 		menu = append(menu, r.Menu)
 	}
-	if strings.Join(menu, ",") != MenuArtists+","+MenuRecent+","+MenuServers {
+	if strings.Join(menu, ",") != MenuArtists+","+MenuRecent+","+MenuPlaylists+","+MenuServers {
 		t.Fatalf("root menu = %v", menu)
 	}
 	if err := b.OpenServers(ctx); err != nil {
@@ -111,12 +111,12 @@ func TestRootMenuPicksUpServersThatConnectLater(t *testing.T) {
 	b.SetSwitcher(m)
 	ctx := context.Background()
 	_ = b.LoadRoot(ctx)
-	if len(b.List().Rows) != 2 {
+	if len(b.List().Rows) != 3 {
 		t.Fatalf("one server: %d rows", len(b.List().Rows))
 	}
 	m.Add(multi.Server{ID: "B", Name: "Friend"}, stubLib{}) // a background connect finished
 	b.RefreshRoot(ctx)
-	if len(b.List().Rows) != 3 || b.List().Rows[2].Menu != MenuServers {
+	if len(b.List().Rows) != 4 || b.List().Rows[3].Menu != MenuServers {
 		t.Fatalf("root should now offer Servers: %+v", b.List().Rows)
 	}
 	b.List().Sel = 1

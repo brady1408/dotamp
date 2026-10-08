@@ -44,7 +44,7 @@ func TestBrowserRootMenuOpensArtistsLazily(t *testing.T) {
 	if err := b.LoadRoot(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if b.Title() != "Library" || len(b.List().Rows) != 2 || b.List().Rows[0].Menu != MenuArtists {
+	if b.Title() != "Library" || len(b.List().Rows) != 3 || b.List().Rows[0].Menu != MenuArtists {
 		t.Fatalf("root = %q %+v", b.Title(), b.List().Rows)
 	}
 	if err := b.OpenArtists(ctx); err != nil {

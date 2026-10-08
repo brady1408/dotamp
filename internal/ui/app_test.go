@@ -141,3 +141,33 @@ func TestAppMouseSeekAndListClick(t *testing.T) {
 		t.Fatalf("position after click = %v", p)
 	}
 }
+
+func TestAppPlaysAPlaylistFromItsSecondTrackAndAppendsOne(t *testing.T) {
+	app, s, lib := newApp(t)
+	key(app, tcell.KeyTab, 0) // Library
+	key(app, tcell.KeyDown, 0)
+	key(app, tcell.KeyDown, 0) // Playlists is the third root row
+	key(app, tcell.KeyEnter, 0)
+	app.Draw()
+	if r := strings.Join(rows(s), "\n"); !strings.Contains(r, "Road Trip") {
+		t.Fatalf("playlist list missing:\n%s", r)
+	}
+	key(app, tcell.KeyRune, 'a') // append the whole playlist
+	if got := app.ctrl.Tracks(); len(got) != 2 || got[0].ID != "301" {
+		t.Fatalf("queue after a = %+v", got)
+	}
+	app.Draw()
+	if r := rows(s); !strings.Contains(r[1], "Added Road Trip (2)") {
+		t.Fatalf("notice row = %q", r[1])
+	}
+	key(app, tcell.KeyEnter, 0) // open it
+	key(app, tcell.KeyDown, 0)  // second track
+	key(app, tcell.KeyEnter, 0) // play the playlist from there
+	cur, ok := app.ctrl.Current()
+	if !ok || cur.ID != "300" || len(lib.played) != 1 {
+		t.Fatalf("current=%+v played=%v", cur, lib.played)
+	}
+	if got := app.ctrl.Tracks(); len(got) != 2 || got[0].ID != "301" || got[1].ID != "300" {
+		t.Fatalf("playing a playlist replaces the queue with it in order: %+v", got)
+	}
+}

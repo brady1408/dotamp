@@ -17,6 +17,7 @@ type Row struct {
 	Album       *library.Album
 	Track       *library.Track
 	Artist      *library.Artist
+	Playlist    *library.Playlist
 	Playing     bool
 }
 

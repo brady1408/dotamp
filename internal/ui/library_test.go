@@ -23,12 +23,18 @@ func (stubLib) AlbumTracks(_ context.Context, id string) ([]library.Track, error
 }
 func (stubLib) Artists(context.Context, int, int) ([]library.Artist, int, error) { return nil, 0, nil }
 func (stubLib) ArtistIndex(context.Context) ([]library.Letter, error)            { return nil, nil }
-func (stubLib) Playlists(context.Context) ([]library.Playlist, error)            { return nil, nil }
-func (stubLib) PlaylistTracks(context.Context, string) ([]library.Track, error) {
-	return nil, nil
+func (stubLib) Playlists(context.Context) ([]library.Playlist, error) {
+	return []library.Playlist{{ID: "p1", Name: "Road Trip", TrackCount: 3}, {ID: "p2", Name: "Empty", TrackCount: 0}}, nil
 }
-func (stubLib) CreatePlaylist(context.Context, string, []library.Track) (library.Playlist, error) {
-	return library.Playlist{}, nil
+func (stubLib) PlaylistTracks(_ context.Context, id string) ([]library.Track, error) {
+	if id == "p2" {
+		return nil, nil
+	}
+	// count says 3, the server has deleted one since: two come back
+	return []library.Track{{ID: "301", Title: "It's Gonna Be Me", Artist: "*NSYNC", Index: 2}, {ID: "300", Title: "Bye Bye Bye", Artist: "*NSYNC", Index: 1}}, nil
+}
+func (stubLib) CreatePlaylist(_ context.Context, name string, ts []library.Track) (library.Playlist, error) {
+	return library.Playlist{ID: "new", Name: name, TrackCount: len(ts)}, nil
 }
 func (stubLib) ArtistAlbums(context.Context, string) ([]library.Album, error) { return nil, nil }
 func (stubLib) Stream(context.Context, library.Track) (library.Stream, error) {
@@ -116,4 +122,119 @@ type albumLib struct{ stubLib }
 
 func (albumLib) Search(context.Context, string) (library.SearchResult, error) {
 	return library.SearchResult{Tracks: []library.Track{{ID: "300", Title: "Bye Bye Bye", Artist: "*NSYNC", Album: "No Strings Attached"}}}, nil
+}
+
+func TestRootMenuHasPlaylists(t *testing.T) {
+	b := NewBrowser(stubLib{})
+	_ = b.LoadRoot(context.Background())
+	rows := b.List().Rows
+	if len(rows) != 3 || rows[2].Menu != MenuPlaylists || rows[2].Text != "Playlists" {
+		t.Fatalf("root rows = %+v", rows)
+	}
+}
+
+func TestPlaylistsViewListsAndOpens(t *testing.T) {
+	b := NewBrowser(stubLib{})
+	ctx := context.Background()
+	_ = b.LoadRoot(ctx)
+	if err := b.OpenPlaylists(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if b.Title() != "Playlists" {
+		t.Fatalf("title = %q", b.Title())
+	}
+	rows := b.List().Rows
+	if len(rows) != 2 || rows[0].Playlist == nil || rows[0].Text != "Road Trip" || rows[0].Right != "3" {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if err := b.OpenPlaylist(ctx, *rows[0].Playlist); err != nil {
+		t.Fatal(err)
+	}
+	rows = b.List().Rows
+	// header, then the two tracks that still exist, numbered by position
+	if len(rows) != 3 || !rows[0].Header || rows[1].Text != " 1. *NSYNC — It's Gonna Be Me" || rows[2].Track.ID != "300" {
+		t.Fatalf("playlist rows = %+v", rows)
+	}
+	ts, ok := b.AlbumContext()
+	if !ok || len(ts) != 2 || ts[0].ID != "301" {
+		t.Fatalf("a playlist view carries its tracks like an album view: %+v %v", ts, ok)
+	}
+	if sel := b.List().Selected(); sel == nil || sel.Track == nil || sel.Track.ID != "301" {
+		t.Fatalf("first track should be selected: %+v", sel)
+	}
+}
+
+func TestEmptyPlaylistOpensToItsHeaderOnly(t *testing.T) {
+	b := NewBrowser(stubLib{})
+	ctx := context.Background()
+	_ = b.LoadRoot(ctx)
+	_ = b.OpenPlaylists(ctx)
+	if err := b.OpenPlaylist(ctx, *b.List().Rows[1].Playlist); err != nil {
+		t.Fatal(err)
+	}
+	rows := b.List().Rows
+	if len(rows) != 1 || !rows[0].Header {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if ts, ok := b.AlbumContext(); !ok || len(ts) != 0 {
+		t.Fatalf("empty context must still be an (empty) album context: %v %v", ts, ok)
+	}
+}
+
+type noPlaylists struct{ stubLib }
+
+func (noPlaylists) Playlists(context.Context) ([]library.Playlist, error) { return nil, nil }
+
+func TestNoPlaylistsShowsOneDimRow(t *testing.T) {
+	b := NewBrowser(noPlaylists{})
+	_ = b.LoadRoot(context.Background())
+	_ = b.OpenPlaylists(context.Background())
+	rows := b.List().Rows
+	if len(rows) != 1 || !rows[0].Header || rows[0].Text != "No playlists" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+type taggedLib struct{ stubLib }
+
+func (taggedLib) Playlists(context.Context) ([]library.Playlist, error) {
+	return []library.Playlist{{ID: "A:p1", Name: "Road Trip", TrackCount: 3, Server: "A"}, {ID: "B:p7", Name: "Theirs", TrackCount: 9, Server: "B"}}, nil
+}
+
+func TestPlaylistsGroupByServerWithHeaders(t *testing.T) {
+	b := NewBrowser(taggedLib{})
+	b.SetSwitcher(twoServers())
+	_ = b.LoadRoot(context.Background())
+	_ = b.OpenPlaylists(context.Background())
+	rows := b.List().Rows
+	want := []string{"Ressikan", "Road Trip", "Friend (relay)", "Theirs"}
+	if len(rows) != 4 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	for i, w := range want {
+		if rows[i].Text != w || rows[i].Header != (i%2 == 0) {
+			t.Fatalf("row %d = %+v, want %q", i, rows[i], w)
+		}
+	}
+	if sel := b.List().Selected(); sel == nil || sel.Header || sel.Text != "Road Trip" {
+		t.Fatalf("the first playlist, not a header, should be selected: %+v", sel)
+	}
+}
+
+func TestReloadPlaylistsOnlyWhenOnTop(t *testing.T) {
+	b := NewBrowser(stubLib{})
+	ctx := context.Background()
+	_ = b.LoadRoot(ctx)
+	_ = b.OpenPlaylists(ctx)
+	b.List().Sel = 1
+	b.ReloadPlaylists(ctx)
+	if b.Title() != "Playlists" || b.List().Sel != 1 || len(b.stack) != 2 {
+		t.Fatalf("reload should rebuild in place and keep the selection: %q sel=%d depth=%d", b.Title(), b.List().Sel, len(b.stack))
+	}
+	_ = b.OpenPlaylist(ctx, *b.List().Rows[0].Playlist)
+	depth := len(b.stack)
+	b.ReloadPlaylists(ctx)
+	if len(b.stack) != depth || b.Title() != "Road Trip" {
+		t.Fatal("reload must leave a deeper view alone")
+	}
 }

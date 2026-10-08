@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	MenuArtists = "artists"
-	MenuRecent  = "recent"
-	MenuServers = "servers"
+	MenuArtists   = "artists"
+	MenuRecent    = "recent"
+	MenuPlaylists = "playlists"
+	MenuServers   = "servers"
 
 	artistPage = 200 // artists fetched per request while scrolling the index
 )
@@ -64,10 +65,11 @@ func (b *Browser) serverName(id string) string {
 }
 
 type view struct {
-	title   string
-	list    List
-	tracks  []library.Track // set for an album view: Enter on a track plays these from there
-	artists *artistIndex    // set for the Artists view
+	title     string
+	list      List
+	tracks    []library.Track // set for an album or playlist view: Enter on a track plays these from there
+	artists   *artistIndex    // set for the Artists view
+	playlists bool            // the Playlists list, rebuilt by ReloadPlaylists
 }
 
 type artistIndex struct {
@@ -124,6 +126,7 @@ func (b *Browser) LoadRoot(context.Context) error {
 	rows := []Row{
 		{Text: "Artists", Menu: MenuArtists},
 		{Text: "Recently added", Menu: MenuRecent},
+		{Text: "Playlists", Menu: MenuPlaylists},
 	}
 	if b.sw != nil && len(b.sw.Servers()) > 1 {
 		rows = append(rows, Row{Text: "Servers", Menu: MenuServers})
@@ -141,9 +144,9 @@ func (b *Browser) RefreshRoot(ctx context.Context) {
 	if len(b.stack) != 1 || b.sw == nil {
 		return
 	}
-	want := 2
+	want := 3
 	if len(b.sw.Servers()) > 1 {
-		want = 3
+		want = 4
 	}
 	if len(b.stack[0].list.Rows) == want {
 		return
@@ -375,6 +378,96 @@ func (b *Browser) OpenArtist(ctx context.Context, a library.Artist) error {
 // AlbumTracks is what `a` on an album appends: the same call the view uses.
 func (b *Browser) AlbumTracks(ctx context.Context, a library.Album) ([]library.Track, error) {
 	return b.lib.AlbumTracks(ctx, a.ID)
+}
+
+// playlistRows lists playlists, grouped under a header per server when
+// there are several, as search results are.
+func (b *Browser) playlistRows(ps []library.Playlist) []Row {
+	if len(ps) == 0 {
+		return []Row{{Text: "No playlists", Header: true}}
+	}
+	servers := []string{""}
+	if b.sw != nil && len(b.sw.Servers()) > 1 {
+		servers = servers[:0]
+		for _, s := range b.sw.Servers() {
+			servers = append(servers, s.ID)
+		}
+	}
+	var rows []Row
+	for _, sid := range servers {
+		if sid != "" {
+			rows = append(rows, Row{Text: b.serverName(sid), Header: true})
+		}
+		for i := range ps {
+			p := &ps[i]
+			if sid == "" || p.Server == sid {
+				rows = append(rows, Row{Text: p.Name, Right: fmt.Sprint(p.TrackCount), Playlist: p})
+			}
+		}
+	}
+	return rows
+}
+
+// OpenPlaylists pushes the list of every server's playlists.
+func (b *Browser) OpenPlaylists(ctx context.Context) error {
+	ps, err := b.lib.Playlists(ctx)
+	if err != nil {
+		return err
+	}
+	var l List
+	l.SetRows(b.playlistRows(ps))
+	b.push(view{title: "Playlists", list: l, playlists: true})
+	return nil
+}
+
+// ReloadPlaylists refetches the list when it is the open view, keeping the
+// selection, so a playlist saved a moment ago appears. Deeper views are
+// left alone.
+func (b *Browser) ReloadPlaylists(ctx context.Context) {
+	v := b.top()
+	if v == nil || !v.playlists {
+		return
+	}
+	ps, err := b.lib.Playlists(ctx)
+	if err != nil {
+		return
+	}
+	sel := v.list.Sel
+	v.list.SetRows(b.playlistRows(ps))
+	if sel < len(v.list.Rows) {
+		v.list.Sel = sel
+	}
+}
+
+// PlaylistTracks is what `a` on a playlist row appends: the same call the
+// view uses.
+func (b *Browser) PlaylistTracks(ctx context.Context, p library.Playlist) ([]library.Track, error) {
+	return b.lib.PlaylistTracks(ctx, p.ID)
+}
+
+// OpenPlaylist pushes a playlist's tracks. It carries them as an album
+// view does, so Enter on a track plays the playlist from there.
+func (b *Browser) OpenPlaylist(ctx context.Context, p library.Playlist) error {
+	ts, err := b.lib.PlaylistTracks(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	rows := []Row{{Text: fmt.Sprintf("%s — %d tracks", p.Name, len(ts)), Header: true}}
+	for i := range ts {
+		t := &ts[i]
+		text := fmt.Sprintf("%2d. %s", i+1, t.Title)
+		if t.Artist != "" {
+			text = fmt.Sprintf("%2d. %s — %s", i+1, t.Artist, t.Title)
+		}
+		rows = append(rows, Row{Text: text, Right: Clock(t.Duration), Track: t})
+	}
+	var l List
+	l.SetRows(rows)
+	if ts == nil {
+		ts = []library.Track{}
+	}
+	b.push(view{title: p.Name, list: l, tracks: ts})
+	return nil
 }
 
 func albumRows(header string, albums []library.Album) []Row {
