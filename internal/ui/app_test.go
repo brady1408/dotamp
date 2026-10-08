@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -390,5 +391,115 @@ func TestEscapeInTheLibraryGoesHome(t *testing.T) {
 	key(app, tcell.KeyEscape, 0)
 	if app.browser.Title() != "Library" {
 		t.Fatalf("escape should return to the root menu, got %q", app.browser.Title())
+	}
+}
+
+type editLib struct {
+	stubLib
+	mu    sync.Mutex
+	added []string
+}
+
+func (l *editLib) AddToPlaylist(_ context.Context, id string, ts []library.Track) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, t := range ts {
+		l.added = append(l.added, id+"<-"+t.ID)
+	}
+	return nil
+}
+
+func newEditApp(t *testing.T) (*App, tcell.SimulationScreen, *editLib) {
+	t.Helper()
+	app, s, _ := newApp(t)
+	lib := &editLib{}
+	app.lib = lib
+	app.browser = NewBrowser(lib)
+	_ = app.browser.LoadRoot(context.Background())
+	return app, s, lib
+}
+
+func TestToPlaylistFromASearchTrackAndAnAlbum(t *testing.T) {
+	app, s, lib := newEditApp(t)
+	key(app, tcell.KeyTab, 0)
+	key(app, tcell.KeyRune, '/')
+	typeKeys(app, "nsync")
+	key(app, tcell.KeyEnter, 0) // results: album 200 selected
+	key(app, tcell.KeyRune, 't')
+	app.Draw()
+	if r := strings.Join(rows(s), "\n"); !strings.Contains(r, "Add to playlist") || !strings.Contains(r, "Road Trip") {
+		t.Fatalf("picker missing:\n%s", r)
+	}
+	key(app, tcell.KeyEnter, 0) // Road Trip (p1)
+	if got := strings.Join(lib.added, " "); got != "p1<-300 p1<-301" {
+		t.Fatalf("added = %q", got)
+	}
+	app.Draw()
+	if r := rows(s); !strings.Contains(r[1], "Added 2 to Road Trip") || app.browser.Title() != "Search: nsync" {
+		t.Fatalf("notice=%q title=%q", r[1], app.browser.Title())
+	}
+	key(app, tcell.KeyEscape, 0) // home
+	key(app, tcell.KeyRune, 't') // on the root menu: nothing
+	if app.browser.Title() != "Library" {
+		t.Fatal("t on a menu row must do nothing")
+	}
+}
+
+func TestToPlaylistFromTheQueueUsesTheTrackServer(t *testing.T) {
+	app, s, lib := newEditApp(t)
+	app.ctrl.Enqueue(library.Track{ID: "300", Title: "x"})
+	app.Draw()
+	key(app, tcell.KeyRune, 't')
+	if app.tab != tabLibrary || app.browser.Title() != "Add to playlist" {
+		t.Fatalf("t in the queue opens the picker in the Library: tab=%d title=%q", app.tab, app.browser.Title())
+	}
+	key(app, tcell.KeyBackspace, 0)
+	if app.browser.Title() != "Library" || len(lib.added) != 0 {
+		t.Fatal("backspace cancels without adding")
+	}
+	app.tab = tabQueue
+	key(app, tcell.KeyRune, 't')
+	key(app, tcell.KeyDown, 0) // Empty (p2)
+	key(app, tcell.KeyEnter, 0)
+	app.Draw()
+	if got := strings.Join(lib.added, " "); got != "p2<-300" {
+		t.Fatalf("added = %q", got)
+	}
+	if r := rows(s); !strings.Contains(r[1], "Added 1 to Empty") {
+		t.Fatalf("notice = %q", r[1])
+	}
+}
+
+type emptyAlbumLib struct{ stubLib }
+
+func (emptyAlbumLib) AlbumTracks(context.Context, string) ([]library.Track, error) { return nil, nil }
+
+func TestToPlaylistWithNothingToAdd(t *testing.T) {
+	app, s, _ := newApp(t)
+	app.browser = NewBrowser(emptyAlbumLib{})
+	_ = app.browser.LoadRoot(context.Background())
+	key(app, tcell.KeyTab, 0)
+	key(app, tcell.KeyRune, '/')
+	typeKeys(app, "nsync")
+	key(app, tcell.KeyEnter, 0)
+	key(app, tcell.KeyRune, 't')
+	app.Draw()
+	if r := rows(s); !strings.Contains(r[1], "Nothing to add") || app.browser.Title() != "Search: nsync" {
+		t.Fatalf("notice=%q title=%q", r[1], app.browser.Title())
+	}
+}
+
+func TestToPlaylistWithNoPlaylistsNamesTheServer(t *testing.T) {
+	app, s, _ := newApp(t)
+	app.browser = NewBrowser(noPlaylists{})
+	_ = app.browser.LoadRoot(context.Background())
+	key(app, tcell.KeyTab, 0)
+	key(app, tcell.KeyRune, '/')
+	typeKeys(app, "nsync")
+	key(app, tcell.KeyEnter, 0)
+	key(app, tcell.KeyRune, 't')
+	app.Draw()
+	if r := rows(s); !strings.Contains(r[1], "No playlists on") || app.browser.Title() != "Search: nsync" {
+		t.Fatalf("notice=%q title=%q", r[1], app.browser.Title())
 	}
 }

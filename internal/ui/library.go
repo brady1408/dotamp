@@ -92,6 +92,16 @@ type view struct {
 	tracks    []library.Track // set for an album or playlist view: Enter on a track plays these from there
 	artists   *artistIndex    // set for the Artists view
 	playlists bool            // the Playlists list, rebuilt by ReloadPlaylists
+	picker    *picker         // the "Add to playlist" view
+}
+
+var errNoPlaylists = errors.New("no playlists")
+
+// picker is the "Add to playlist" view's payload: what to add, which server
+// the playlists must be on, and a playlist to leave out (the source).
+type picker struct {
+	tracks          []library.Track
+	server, exclude string
 }
 
 type artistIndex struct {
@@ -135,6 +145,48 @@ func (b *Browser) AlbumContext() ([]library.Track, bool) {
 
 func (b *Browser) push(v view) {
 	b.stack = append(b.stack, v)
+}
+
+// OpenPicker pushes a list of the playlists on the tracks' server. It
+// returns errNoPlaylists, pushing nothing, when there are none to offer.
+func (b *Browser) OpenPicker(ctx context.Context, tracks []library.Track, exclude string) error {
+	if len(tracks) == 0 {
+		return errNoPlaylists
+	}
+	server := tracks[0].Server
+	ps, err := b.lib.Playlists(ctx)
+	if err != nil {
+		return err
+	}
+	var rows []Row
+	for i := range ps {
+		p := &ps[i]
+		if p.Server == server && p.ID != exclude {
+			rows = append(rows, Row{Text: p.Name, Right: fmt.Sprint(p.TrackCount), Playlist: p})
+		}
+	}
+	if len(rows) == 0 {
+		return errNoPlaylists
+	}
+	var l List
+	l.SetRows(rows)
+	b.push(view{title: "Add to playlist", list: l, picker: &picker{tracks: tracks, server: server, exclude: exclude}})
+	return nil
+}
+
+// InPicker reports whether the open view is the picker and returns its payload.
+func (b *Browser) InPicker() (*picker, bool) {
+	if v := b.top(); v != nil && v.picker != nil {
+		return v.picker, true
+	}
+	return nil, false
+}
+
+// CancelPicker pops the picker if it is open.
+func (b *Browser) CancelPicker() {
+	if _, ok := b.InPicker(); ok {
+		b.stack = b.stack[:len(b.stack)-1]
+	}
 }
 
 // Home drops every view above the root menu. It reports whether anything

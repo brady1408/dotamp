@@ -364,3 +364,32 @@ func TestHomeReturnsToTheRootMenu(t *testing.T) {
 		t.Fatal("home at the root reports nothing to do")
 	}
 }
+
+func TestPickerListsSameServerPlaylistsOnly(t *testing.T) {
+	b := NewBrowser(taggedLib{}) // A: Road Trip (A:p1), B: Theirs (B:p7)
+	b.SetSwitcher(twoServers())
+	_ = b.LoadRoot(context.Background())
+	err := b.OpenPicker(context.Background(), []library.Track{{ID: "B:9", Server: "B"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := b.List().Rows
+	if b.Title() != "Add to playlist" || len(rows) != 1 || rows[0].Playlist == nil || rows[0].Playlist.Name != "Theirs" {
+		t.Fatalf("picker rows = %+v", rows)
+	}
+	p, ok := b.InPicker()
+	if !ok || len(p.tracks) != 1 || p.server != "B" {
+		t.Fatalf("picker state = %+v %v", p, ok)
+	}
+	b.CancelPicker()
+	if _, ok := b.InPicker(); ok || b.Title() != "Library" {
+		t.Fatal("cancel pops the picker")
+	}
+	// excluding the source playlist leaves nothing on B
+	if err := b.OpenPicker(context.Background(), []library.Track{{ID: "B:9", Server: "B"}}, "B:p7"); err != errNoPlaylists {
+		t.Fatalf("err = %v", err)
+	}
+	if _, ok := b.InPicker(); ok {
+		t.Fatal("no candidates means no picker")
+	}
+}

@@ -181,6 +181,18 @@ func (a *App) key(ev *tcell.EventKey) bool {
 		return false
 	}
 	list := a.activeList()
+	if p, ok := a.browser.InPicker(); ok && a.tab == tabLibrary {
+		switch act {
+		case ActEnter:
+			if row := list.Selected(); row != nil && row.Playlist != nil {
+				a.addToPlaylist(ctx, *row.Playlist, p.tracks)
+			}
+			return false
+		case ActBack, ActEscape:
+			a.browser.CancelPicker()
+			return false
+		}
+	}
 	switch act {
 	case ActQuit:
 		return true
@@ -255,6 +267,8 @@ func (a *App) key(ev *tcell.EventKey) bool {
 				a.queue.Sel = max(n-1, 0)
 			}
 		}
+	case ActToPlaylist:
+		a.toPlaylist(ctx, list.Selected())
 	case ActEnter:
 		a.activate(ctx, list.Selected(), false)
 	case ActAppend:
@@ -286,6 +300,51 @@ func saveNotice(name string, saved []library.Saved, err error, serverName func(s
 		out += "; " + err.Error()
 	}
 	return out
+}
+
+// toPlaylist gathers the tracks behind row and opens the picker for them.
+func (a *App) toPlaylist(ctx context.Context, row *Row) {
+	if row == nil || row.Header {
+		return
+	}
+	var tracks []library.Track
+	var err error
+	exclude := ""
+	switch {
+	case row.Track != nil:
+		tracks = []library.Track{*row.Track}
+	case row.Album != nil:
+		tracks, err = a.browser.AlbumTracks(ctx, *row.Album)
+	case row.Playlist != nil:
+		tracks, err = a.browser.PlaylistTracks(ctx, *row.Playlist)
+		exclude = row.Playlist.ID
+	default:
+		return
+	}
+	if err != nil {
+		a.setNotice("Add failed: " + err.Error())
+		return
+	}
+	if len(tracks) == 0 {
+		a.setNotice("Nothing to add")
+		return
+	}
+	a.tab = tabLibrary
+	switch err := a.browser.OpenPicker(ctx, tracks, exclude); {
+	case err == errNoPlaylists:
+		a.setNotice("No playlists on " + a.browser.serverLabel(tracks[0].Server))
+	case err != nil:
+		a.setNotice("Add failed: " + err.Error())
+	}
+}
+
+func (a *App) addToPlaylist(ctx context.Context, p library.Playlist, tracks []library.Track) {
+	if err := a.lib.AddToPlaylist(ctx, p.ID, tracks); err != nil {
+		a.setNotice("Add failed: " + err.Error())
+		return
+	}
+	a.browser.CancelPicker()
+	a.setNotice(fmt.Sprintf("Added %d to %s", len(tracks), p.Name))
 }
 
 func (a *App) run(err error) {
