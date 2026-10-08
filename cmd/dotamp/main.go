@@ -19,6 +19,7 @@ import (
 
 	"github.com/brady1408/dotamp/internal/audio"
 	"github.com/brady1408/dotamp/internal/config"
+	"github.com/brady1408/dotamp/internal/mediakeys"
 	"github.com/brady1408/dotamp/internal/multi"
 	"github.com/brady1408/dotamp/internal/netlog"
 	"github.com/brady1408/dotamp/internal/plex"
@@ -611,6 +612,24 @@ func run(debugLog, silent bool) (err error) {
 		defer guard("controller")
 		ctrl.Run(ctx)
 	}()
+	if !cfg.NoMediaKeys {
+		go func() {
+			defer guard("media keys")
+			err := mediakeys.Listen(ctx, func(act mediakeys.Action) {
+				switch act {
+				case mediakeys.PlayPause:
+					ctrl.TogglePause()
+				case mediakeys.Next:
+					_ = ctrl.Next(ctx)
+				case mediakeys.Prev:
+					_ = ctrl.Prev(ctx)
+				}
+			})
+			if err != nil {
+				log.Printf("%v", err)
+			}
+		}()
+	}
 	func() {
 		defer guard("ui")
 		err = app.Run(ctx)

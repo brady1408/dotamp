@@ -26,7 +26,8 @@ type Config struct {
 	RemoteBitrate int        `json:"remote_bitrate,omitempty"` // kbps to transcode to on any non-local connection; 0 = original
 	Visual        string     `json:"visual,omitempty"`         // analyzer mode: "bars", "scope", "spectrogram" or "stereo"
 	Navidrome     *Navidrome `json:"navidrome,omitempty"`
-	OutputRate    int        `json:"output_rate,omitempty"` // device sample rate; 44100 when unset. Match your DAC to avoid a second conversion.
+	OutputRate    int        `json:"output_rate,omitempty"`        // device sample rate; 44100 when unset. Match your DAC to avoid a second conversion.
+	NoMediaKeys   bool       `json:"disable_media_keys,omitempty"` // leave the keyboard's media keys to other programs
 }
 
 // Navidrome is an optional second library on a Subsonic-compatible server.

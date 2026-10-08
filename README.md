@@ -96,6 +96,8 @@ The one you leave it on is remembered.
 
 The log lives at `~/Library/Caches/dotamp/dotamp.log` on macOS and `~/.cache/dotamp/dotamp.log` elsewhere. `dotamp --debug` adds every HTTP request to it.
 
+On Windows the keyboard's media keys, play/pause, next and previous, reach dotamp even when another window has focus; it registers them as global hotkeys at start, which takes them from other players while it runs. Set `"disable_media_keys": true` in the config to leave them alone. macOS and Linux do not have this yet.
+
 `dotamp --silent` runs without a sound device: nothing is heard, but the visualizers move exactly as they would over speakers. It is how the pictures above are made, and it lets dotamp run on a box with no audio.
 
 ## Terminals
