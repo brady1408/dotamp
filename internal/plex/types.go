@@ -2,10 +2,11 @@ package plex
 
 type container struct {
 	MediaContainer struct {
-		TotalSize int         `json:"totalSize"`
-		Directory []directory `json:"Directory"`
-		Hub       []hub       `json:"Hub"`
-		Metadata  []metadata  `json:"Metadata"`
+		TotalSize         int         `json:"totalSize"`
+		MachineIdentifier string      `json:"machineIdentifier"`
+		Directory         []directory `json:"Directory"`
+		Hub               []hub       `json:"Hub"`
+		Metadata          []metadata  `json:"Metadata"`
 	} `json:"MediaContainer"`
 }
 

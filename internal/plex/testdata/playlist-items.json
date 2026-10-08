@@ -1,0 +1,6 @@
+{"MediaContainer":{"size":2,"Metadata":[
+ {"ratingKey":"300","type":"track","title":"Bye Bye Bye","index":1,"parentTitle":"No Strings Attached","parentRatingKey":"200","grandparentTitle":"*NSYNC","duration":200000,
+  "Media":[{"audioCodec":"flac","container":"flac","bitrate":978,"Part":[{"key":"/library/parts/1/1/file.flac","Stream":[{"streamType":2,"samplingRate":44100,"bitDepth":16}]}]}]},
+ {"ratingKey":"301","type":"track","title":"It's Gonna Be Me","index":2,"parentTitle":"No Strings Attached","parentRatingKey":"200","grandparentTitle":"*NSYNC","duration":191000,
+  "Media":[{"audioCodec":"aac","container":"mp4","bitrate":256,"Part":[{"key":"/library/parts/1/2/file.m4a"}]}]}
+]}}

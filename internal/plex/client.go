@@ -26,6 +26,7 @@ type Client struct {
 	local, relay         bool   // how the connection to this server was reached
 	relayCap             int    // kbps the relay can carry; 0 = unknown
 	remoteBitrate        int    // kbps to transcode to on any non-local connection; 0 = original
+	machineID            string // from /identity, fetched once; playlists are addressed through it
 }
 
 func New(server, token, clientID string) *Client {
@@ -60,11 +61,23 @@ func (c *Client) headers(h http.Header) {
 }
 
 func (c *Client) get(ctx context.Context, path string, q url.Values, out *container) error {
+	return c.do(ctx, http.MethodGet, path, q, out)
+}
+
+func (c *Client) post(ctx context.Context, path string, q url.Values, out *container) error {
+	return c.do(ctx, http.MethodPost, path, q, out)
+}
+
+func (c *Client) put(ctx context.Context, path string, q url.Values, out *container) error {
+	return c.do(ctx, http.MethodPut, path, q, out)
+}
+
+func (c *Client) do(ctx context.Context, method, path string, q url.Values, out *container) error {
 	u := c.server + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, method, u, nil)
 	if err != nil {
 		return err
 	}
@@ -74,12 +87,15 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out *contai
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("plex: %s: HTTP %d", path, resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
 		return err
+	}
+	if len(body) == 0 {
+		return nil
 	}
 	return json.Unmarshal(body, out)
 }
