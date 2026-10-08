@@ -371,25 +371,41 @@ func (a *App) editPlaylist(ctx context.Context, delta int, remove bool) {
 		return
 	}
 	n := len(a.browser.List().Rows) - 1
+	to := pos + delta
+	if !remove && (to < 0 || to >= n) {
+		return
+	}
+	op := "Move"
+	if remove {
+		op = "Remove"
+	}
+	// The server's list may have changed since the view was drawn; a
+	// position only means something while it still names the same track.
+	ts, err := a.lib.PlaylistTracks(ctx, p.ID)
+	if err != nil {
+		a.setNotice(op + " failed: " + err.Error())
+		return
+	}
+	if pos >= len(ts) || ts[pos].ID != row.Track.ID || (!remove && to >= len(ts)) {
+		a.setNotice("Playlist changed on the server, refreshed")
+		_ = a.browser.RefreshPlaylist(ctx, pos)
+		return
+	}
 	if remove {
 		if err := a.lib.RemoveFromPlaylist(ctx, p.ID, pos); err != nil {
 			a.setNotice("Remove failed: " + err.Error())
 		} else {
 			a.setNotice(fmt.Sprintf("Removed %s from %s", row.Track.Title, p.Name))
 		}
-		a.run(a.browser.RefreshPlaylist(ctx, pos))
-		return
-	}
-	to := pos + delta
-	if to < 0 || to >= n {
+		_ = a.browser.RefreshPlaylist(ctx, pos) // on failure the view and the notice stay
 		return
 	}
 	if err := a.lib.MovePlaylistTrack(ctx, p.ID, pos, to); err != nil {
 		a.setNotice("Move failed: " + err.Error())
-		a.run(a.browser.RefreshPlaylist(ctx, pos))
+		_ = a.browser.RefreshPlaylist(ctx, pos)
 		return
 	}
-	a.run(a.browser.RefreshPlaylist(ctx, to))
+	_ = a.browser.RefreshPlaylist(ctx, to)
 }
 
 func (a *App) run(err error) {

@@ -611,6 +611,11 @@ func (b *Browser) OpenPlaylist(ctx context.Context, p library.Playlist) error {
 	if err != nil {
 		return err
 	}
+	b.push(playlistView(p, ts))
+	return nil
+}
+
+func playlistView(p library.Playlist, ts []library.Track) view {
 	rows := []Row{{Text: fmt.Sprintf("%s — %d tracks", p.Name, len(ts)), Header: true}}
 	for i := range ts {
 		t := &ts[i]
@@ -626,8 +631,7 @@ func (b *Browser) OpenPlaylist(ctx context.Context, p library.Playlist) error {
 		ts = []library.Track{}
 	}
 	p.TrackCount = len(ts)
-	b.push(view{title: p.Name, list: l, tracks: ts, playlist: &p})
-	return nil
+	return view{title: p.Name, list: l, tracks: ts, playlist: &p}
 }
 
 // PlaylistView returns the open playlist and the selected entry's position
@@ -641,18 +645,19 @@ func (b *Browser) PlaylistView() (*library.Playlist, int, bool) {
 }
 
 // RefreshPlaylist re-fetches the open playlist view and selects position
-// sel, clamped to the rows that came back.
+// sel, clamped to the rows that came back. A failed fetch leaves the view
+// untouched.
 func (b *Browser) RefreshPlaylist(ctx context.Context, sel int) error {
 	v := b.top()
 	if v == nil || v.playlist == nil {
 		return nil
 	}
-	p := *v.playlist
-	b.stack = b.stack[:len(b.stack)-1]
-	if err := b.OpenPlaylist(ctx, p); err != nil {
-		return err
+	ts, err := b.lib.PlaylistTracks(ctx, v.playlist.ID)
+	if err != nil {
+		return err // the view stays as it was
 	}
-	v = b.top()
+	nv := playlistView(*v.playlist, ts)
+	*v = nv
 	v.list.Sel = max(1, min(sel+1, len(v.list.Rows)-1))
 	if len(v.list.Rows) == 1 {
 		v.list.Sel = -1

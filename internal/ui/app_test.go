@@ -593,17 +593,25 @@ func TestPlaylistViewRemoveAndMoveFollowTheCursor(t *testing.T) {
 func TestPlaylistViewRemoveFailureRefreshes(t *testing.T) {
 	lib := &orderLib{order: []string{"a", "b"}, failRem: true}
 	app, s := openPlaylistApp(t, lib)
-	lib.mu.Lock()
-	lib.order = []string{"a"} // edited elsewhere
-	lib.mu.Unlock()
 	key(app, tcell.KeyDown, 0)
-	key(app, tcell.KeyRune, 'x')
+	key(app, tcell.KeyRune, 'x') // the server refuses
 	app.Draw()
 	if r := rows(s); !strings.Contains(r[1], "Remove failed: gone") {
 		t.Fatalf("notice = %q", r[1])
 	}
-	if n := len(app.browser.List().Rows); n != 2 { // header + a
+	if n := len(app.browser.List().Rows); n != 3 { // header + a + b, re-fetched
 		t.Fatalf("the view should re-fetch after a failure: %d rows", n)
+	}
+	lib.mu.Lock()
+	lib.order = []string{"a"} // edited elsewhere: b is gone
+	lib.mu.Unlock()
+	key(app, tcell.KeyRune, 'x')
+	app.Draw()
+	if r := rows(s); !strings.Contains(r[1], "Playlist changed on the server") {
+		t.Fatalf("a stale position refreshes instead of writing: %q", r[1])
+	}
+	if n := len(app.browser.List().Rows); n != 2 || len(lib.calls) != 1 {
+		t.Fatalf("rows=%d calls=%v", n, lib.calls)
 	}
 }
 
@@ -623,5 +631,65 @@ func TestEditKeysAreInertOutsideAPlaylist(t *testing.T) {
 	key(app, tcell.KeyRune, ']')
 	if len(lib.calls) != 0 {
 		t.Fatalf("no server calls from an album view: %v", lib.calls)
+	}
+}
+
+func TestPlaylistViewRefusesToEditAShiftedPlaylist(t *testing.T) {
+	lib := &orderLib{order: []string{"a", "b", "c"}}
+	app, s := openPlaylistApp(t, lib)
+	key(app, tcell.KeyDown, 0) // b at position 1
+	lib.mu.Lock()
+	lib.order = []string{"z", "a", "b", "c"} // someone inserted above it elsewhere
+	lib.mu.Unlock()
+	key(app, tcell.KeyRune, 'x')
+	app.Draw()
+	if len(lib.calls) != 0 {
+		t.Fatalf("no write may happen when position 1 is no longer b: %v", lib.calls)
+	}
+	if r := rows(s); !strings.Contains(r[1], "Playlist changed on the server") {
+		t.Fatalf("notice = %q", r[1])
+	}
+	if n := len(app.browser.List().Rows); n != 5 { // header + z a b c
+		t.Fatalf("the view should show the server's list now: %d rows", n)
+	}
+	key(app, tcell.KeyRune, ']') // the same guard protects moves
+	if len(lib.calls) != 1 || !strings.HasPrefix(lib.calls[0], "move:") {
+		t.Fatalf("a move after the refresh is on the fresh list: %v", lib.calls)
+	}
+}
+
+type flakyRefreshLib struct {
+	orderLib
+	failAfter int // PlaylistTracks calls allowed before it starts failing
+	n         int
+}
+
+func (l *flakyRefreshLib) PlaylistTracks(ctx context.Context, id string) ([]library.Track, error) {
+	l.n++
+	if l.n > l.failAfter {
+		return nil, errors.New("server went away")
+	}
+	return l.orderLib.PlaylistTracks(ctx, id)
+}
+
+func TestFailedRefreshKeepsTheViewAndTheNotice(t *testing.T) {
+	lib := &flakyRefreshLib{orderLib: orderLib{order: []string{"a", "b"}}}
+	lib.failAfter = 2 // open (1) and the pre-write check (2) succeed; the refresh fails
+	app, s, _ := newApp(t)
+	app.lib = lib
+	app.browser = NewBrowser(lib)
+	_ = app.browser.LoadRoot(context.Background())
+	key(app, tcell.KeyTab, 0)
+	key(app, tcell.KeyDown, 0)
+	key(app, tcell.KeyDown, 0)
+	key(app, tcell.KeyEnter, 0) // Playlists
+	key(app, tcell.KeyEnter, 0) // Road Trip
+	key(app, tcell.KeyRune, 'x')
+	app.Draw()
+	if app.browser.Title() != "Road Trip" {
+		t.Fatalf("a failed refresh must keep the view, got %q", app.browser.Title())
+	}
+	if r := rows(s); !strings.Contains(r[1], "Removed Ta from Road Trip") {
+		t.Fatalf("the operation's notice must survive the refresh failure: %q", r[1])
 	}
 }
