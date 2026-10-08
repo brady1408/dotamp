@@ -89,10 +89,11 @@ func (b *Browser) serverLabel(id string) string {
 type view struct {
 	title     string
 	list      List
-	tracks    []library.Track // set for an album or playlist view: Enter on a track plays these from there
-	artists   *artistIndex    // set for the Artists view
-	playlists bool            // the Playlists list, rebuilt by ReloadPlaylists
-	picker    *picker         // the "Add to playlist" view
+	tracks    []library.Track   // set for an album or playlist view: Enter on a track plays these from there
+	artists   *artistIndex      // set for the Artists view
+	playlists bool              // the Playlists list, rebuilt by ReloadPlaylists
+	picker    *picker           // the "Add to playlist" view
+	playlist  *library.Playlist // set for a playlist view: x, [ and ] edit it on the server
 }
 
 var errNoPlaylists = errors.New("no playlists")
@@ -199,11 +200,15 @@ func (b *Browser) Home(context.Context) bool {
 	return true
 }
 
-func (b *Browser) Back(context.Context) bool {
+func (b *Browser) Back(ctx context.Context) bool {
 	if len(b.stack) <= 1 {
 		return false
 	}
+	leaving := b.stack[len(b.stack)-1]
 	b.stack = b.stack[:len(b.stack)-1]
+	if leaving.playlist != nil {
+		b.ReloadPlaylists(ctx) // counts may have changed
+	}
 	return true
 }
 
@@ -620,7 +625,38 @@ func (b *Browser) OpenPlaylist(ctx context.Context, p library.Playlist) error {
 	if ts == nil {
 		ts = []library.Track{}
 	}
-	b.push(view{title: p.Name, list: l, tracks: ts})
+	p.TrackCount = len(ts)
+	b.push(view{title: p.Name, list: l, tracks: ts, playlist: &p})
+	return nil
+}
+
+// PlaylistView returns the open playlist and the selected entry's position
+// (rows minus the header), or false when the open view is not a playlist.
+func (b *Browser) PlaylistView() (*library.Playlist, int, bool) {
+	v := b.top()
+	if v == nil || v.playlist == nil {
+		return nil, 0, false
+	}
+	return v.playlist, v.list.Sel - 1, true
+}
+
+// RefreshPlaylist re-fetches the open playlist view and selects position
+// sel, clamped to the rows that came back.
+func (b *Browser) RefreshPlaylist(ctx context.Context, sel int) error {
+	v := b.top()
+	if v == nil || v.playlist == nil {
+		return nil
+	}
+	p := *v.playlist
+	b.stack = b.stack[:len(b.stack)-1]
+	if err := b.OpenPlaylist(ctx, p); err != nil {
+		return err
+	}
+	v = b.top()
+	v.list.Sel = max(1, min(sel+1, len(v.list.Rows)-1))
+	if len(v.list.Rows) == 1 {
+		v.list.Sel = -1
+	}
 	return nil
 }
 

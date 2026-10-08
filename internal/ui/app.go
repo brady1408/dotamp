@@ -260,7 +260,15 @@ func (a *App) key(ev *tcell.EventKey) bool {
 		a.ctrl.Clear()
 		a.queue.Sel = 0
 		a.setNotice("Queue cleared")
+	case ActMoveUp:
+		a.editPlaylist(ctx, -1, false)
+	case ActMoveDown:
+		a.editPlaylist(ctx, 1, false)
 	case ActRemove:
+		if a.tab == tabLibrary {
+			a.editPlaylist(ctx, 0, true)
+			return false
+		}
 		if a.tab == tabQueue && a.queue.Sel >= 0 && a.queue.Sel < len(a.queue.Rows) {
 			a.run(a.ctrl.Remove(ctx, a.queue.Sel))
 			if n := len(a.ctrl.Tracks()); a.queue.Sel >= n {
@@ -345,6 +353,43 @@ func (a *App) addToPlaylist(ctx context.Context, p library.Playlist, tracks []li
 	}
 	a.browser.CancelPicker()
 	a.setNotice(fmt.Sprintf("Added %d to %s", len(tracks), p.Name))
+}
+
+// editPlaylist removes the selected entry of the open playlist view, or
+// moves it by delta, on the server, then re-fetches the view with the
+// cursor following the entry.
+func (a *App) editPlaylist(ctx context.Context, delta int, remove bool) {
+	if a.tab != tabLibrary {
+		return
+	}
+	p, pos, ok := a.browser.PlaylistView()
+	if !ok || pos < 0 {
+		return
+	}
+	row := a.browser.List().Selected()
+	if row == nil || row.Track == nil {
+		return
+	}
+	n := len(a.browser.List().Rows) - 1
+	if remove {
+		if err := a.lib.RemoveFromPlaylist(ctx, p.ID, pos); err != nil {
+			a.setNotice("Remove failed: " + err.Error())
+		} else {
+			a.setNotice(fmt.Sprintf("Removed %s from %s", row.Track.Title, p.Name))
+		}
+		a.run(a.browser.RefreshPlaylist(ctx, pos))
+		return
+	}
+	to := pos + delta
+	if to < 0 || to >= n {
+		return
+	}
+	if err := a.lib.MovePlaylistTrack(ctx, p.ID, pos, to); err != nil {
+		a.setNotice("Move failed: " + err.Error())
+		a.run(a.browser.RefreshPlaylist(ctx, pos))
+		return
+	}
+	a.run(a.browser.RefreshPlaylist(ctx, to))
 }
 
 func (a *App) run(err error) {

@@ -393,3 +393,27 @@ func TestPickerListsSameServerPlaylistsOnly(t *testing.T) {
 		t.Fatal("no candidates means no picker")
 	}
 }
+
+type countingPlaylists struct {
+	stubLib
+	n int
+}
+
+func (c *countingPlaylists) Playlists(ctx context.Context) ([]library.Playlist, error) {
+	c.n++
+	return c.stubLib.Playlists(ctx)
+}
+
+func TestBackFromAPlaylistReloadsThePlaylistsList(t *testing.T) {
+	lib := &countingPlaylists{}
+	b := NewBrowser(lib)
+	ctx := context.Background()
+	_ = b.LoadRoot(ctx)
+	_ = b.OpenPlaylists(ctx)
+	_ = b.OpenPlaylist(ctx, *b.List().Rows[0].Playlist)
+	before := lib.n
+	_ = b.Back(ctx)
+	if lib.n != before+1 || b.Title() != "Playlists" {
+		t.Fatalf("popping back to Playlists should refetch once: %d -> %d, %q", before, lib.n, b.Title())
+	}
+}

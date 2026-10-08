@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -501,5 +502,126 @@ func TestToPlaylistWithNoPlaylistsNamesTheServer(t *testing.T) {
 	app.Draw()
 	if r := rows(s); !strings.Contains(r[1], "No playlists on") || app.browser.Title() != "Search: nsync" {
 		t.Fatalf("notice=%q title=%q", r[1], app.browser.Title())
+	}
+}
+
+type orderLib struct {
+	stubLib
+	mu      sync.Mutex
+	order   []string // the playlist's entries, mutated by remove and move
+	failRem bool
+	calls   []string
+}
+
+func (l *orderLib) PlaylistTracks(context.Context, string) ([]library.Track, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	ts := make([]library.Track, len(l.order))
+	for i, id := range l.order {
+		ts[i] = library.Track{ID: id, Title: "T" + id}
+	}
+	return ts, nil
+}
+func (l *orderLib) RemoveFromPlaylist(_ context.Context, id string, i int) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.calls = append(l.calls, fmt.Sprintf("remove:%s:%d", id, i))
+	if l.failRem {
+		return errors.New("gone")
+	}
+	l.order = append(l.order[:i], l.order[i+1:]...)
+	return nil
+}
+func (l *orderLib) MovePlaylistTrack(_ context.Context, id string, from, to int) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.calls = append(l.calls, fmt.Sprintf("move:%s:%d:%d", id, from, to))
+	x := l.order[from]
+	rest := append(append([]string(nil), l.order[:from]...), l.order[from+1:]...)
+	l.order = append(append(append([]string(nil), rest[:to]...), x), rest[to:]...)
+	return nil
+}
+
+func openPlaylistApp(t *testing.T, lib *orderLib) (*App, tcell.SimulationScreen) {
+	t.Helper()
+	app, s, _ := newApp(t)
+	app.lib = lib
+	app.browser = NewBrowser(lib)
+	_ = app.browser.LoadRoot(context.Background())
+	key(app, tcell.KeyTab, 0)
+	key(app, tcell.KeyDown, 0)
+	key(app, tcell.KeyDown, 0)
+	key(app, tcell.KeyEnter, 0) // Playlists
+	key(app, tcell.KeyEnter, 0) // Road Trip
+	return app, s
+}
+
+func TestPlaylistViewRemoveAndMoveFollowTheCursor(t *testing.T) {
+	lib := &orderLib{order: []string{"a", "b", "c"}}
+	app, s := openPlaylistApp(t, lib)
+	key(app, tcell.KeyDown, 0) // b
+	key(app, tcell.KeyRune, ']')
+	if strings.Join(lib.order, "") != "acb" || app.browser.List().Selected().Track.ID != "b" {
+		t.Fatalf("down: order=%v sel=%+v", lib.order, app.browser.List().Selected())
+	}
+	key(app, tcell.KeyRune, ']') // b is last: nothing
+	key(app, tcell.KeyRune, '[')
+	key(app, tcell.KeyRune, '[')
+	key(app, tcell.KeyRune, '[') // b is first: nothing
+	if strings.Join(lib.order, "") != "bac" || app.browser.List().Selected().Track.ID != "b" {
+		t.Fatalf("up: order=%v sel=%+v", lib.order, app.browser.List().Selected())
+	}
+	if n := len(lib.calls); n != 3 {
+		t.Fatalf("moves at the ends must send nothing: %v", lib.calls)
+	}
+	key(app, tcell.KeyRune, 'x') // remove b
+	app.Draw()
+	if strings.Join(lib.order, "") != "ac" || app.browser.List().Selected().Track.ID != "a" {
+		t.Fatalf("remove: order=%v sel=%+v", lib.order, app.browser.List().Selected())
+	}
+	if r := rows(s); !strings.Contains(r[1], "Removed Tb from Road Trip") {
+		t.Fatalf("notice = %q", r[1])
+	}
+	if app.ctrl.Tracks() != nil {
+		t.Fatal("the queue is never touched")
+	}
+	if !strings.Contains(strings.Join(rows(s), "\n"), "2 tracks") {
+		t.Fatal("header count should refresh")
+	}
+}
+
+func TestPlaylistViewRemoveFailureRefreshes(t *testing.T) {
+	lib := &orderLib{order: []string{"a", "b"}, failRem: true}
+	app, s := openPlaylistApp(t, lib)
+	lib.mu.Lock()
+	lib.order = []string{"a"} // edited elsewhere
+	lib.mu.Unlock()
+	key(app, tcell.KeyDown, 0)
+	key(app, tcell.KeyRune, 'x')
+	app.Draw()
+	if r := rows(s); !strings.Contains(r[1], "Remove failed: gone") {
+		t.Fatalf("notice = %q", r[1])
+	}
+	if n := len(app.browser.List().Rows); n != 2 { // header + a
+		t.Fatalf("the view should re-fetch after a failure: %d rows", n)
+	}
+}
+
+func TestEditKeysAreInertOutsideAPlaylist(t *testing.T) {
+	lib := &orderLib{order: []string{"a"}}
+	app, _, _ := newApp(t)
+	app.lib = lib
+	app.browser = NewBrowser(lib)
+	_ = app.browser.LoadRoot(context.Background())
+	key(app, tcell.KeyTab, 0)
+	key(app, tcell.KeyRune, '/')
+	typeKeys(app, "nsync")
+	key(app, tcell.KeyEnter, 0)
+	key(app, tcell.KeyEnter, 0) // album view
+	key(app, tcell.KeyRune, 'x')
+	key(app, tcell.KeyRune, '[')
+	key(app, tcell.KeyRune, ']')
+	if len(lib.calls) != 0 {
+		t.Fatalf("no server calls from an album view: %v", lib.calls)
 	}
 }
