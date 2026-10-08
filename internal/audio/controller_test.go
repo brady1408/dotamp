@@ -42,6 +42,9 @@ func (f *fakeLib) PlaylistTracks(context.Context, string) ([]library.Track, erro
 func (f *fakeLib) CreatePlaylist(context.Context, string, []library.Track) (library.Playlist, error) {
 	return library.Playlist{}, nil
 }
+func (f *fakeLib) AddToPlaylist(context.Context, string, []library.Track) error { return nil }
+func (f *fakeLib) RemoveFromPlaylist(context.Context, string, int) error        { return nil }
+func (f *fakeLib) MovePlaylistTrack(context.Context, string, int, int) error    { return nil }
 func (f *fakeLib) Stream(_ context.Context, t library.Track) (library.Stream, error) {
 	f.mu.Lock()
 	f.opens = append(f.opens, t.ID)

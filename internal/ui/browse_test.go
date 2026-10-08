@@ -36,6 +36,9 @@ func (b *bigLib) PlaylistTracks(context.Context, string) ([]library.Track, error
 func (b *bigLib) CreatePlaylist(context.Context, string, []library.Track) (library.Playlist, error) {
 	return library.Playlist{}, nil
 }
+func (b *bigLib) AddToPlaylist(context.Context, string, []library.Track) error { return nil }
+func (b *bigLib) RemoveFromPlaylist(context.Context, string, int) error        { return nil }
+func (b *bigLib) MovePlaylistTrack(context.Context, string, int, int) error    { return nil }
 
 func TestBrowserRootMenuOpensArtistsLazily(t *testing.T) {
 	lib := &bigLib{}

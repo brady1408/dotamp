@@ -38,6 +38,9 @@ func (stubLib) PlaylistTracks(_ context.Context, id string) ([]library.Track, er
 func (stubLib) CreatePlaylist(_ context.Context, name string, ts []library.Track) (library.Playlist, error) {
 	return library.Playlist{ID: "new", Name: name, TrackCount: len(ts)}, nil
 }
+func (stubLib) AddToPlaylist(context.Context, string, []library.Track) error  { return nil }
+func (stubLib) RemoveFromPlaylist(context.Context, string, int) error         { return nil }
+func (stubLib) MovePlaylistTrack(context.Context, string, int, int) error     { return nil }
 func (stubLib) ArtistAlbums(context.Context, string) ([]library.Album, error) { return nil, nil }
 func (stubLib) Stream(context.Context, library.Track) (library.Stream, error) {
 	return library.Stream{}, nil

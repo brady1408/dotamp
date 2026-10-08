@@ -380,3 +380,38 @@ func serverOf(t library.Track, fallback string) string {
 	sid, _ := split(t.ID, fallback)
 	return sid
 }
+
+func (m *Library) AddToPlaylist(ctx context.Context, id string, tracks []library.Track) error {
+	sid, raw := split(id, m.Current().ID)
+	l, err := m.lib(sid)
+	if err != nil {
+		return err
+	}
+	rawTracks := make([]library.Track, len(tracks))
+	for i, t := range tracks {
+		if serverOf(t, sid) != sid {
+			return errors.New("multi: tracks from another server")
+		}
+		_, t.ID = split(t.ID, sid)
+		rawTracks[i] = t
+	}
+	return l.AddToPlaylist(ctx, raw, rawTracks)
+}
+
+func (m *Library) RemoveFromPlaylist(ctx context.Context, id string, index int) error {
+	sid, raw := split(id, m.Current().ID)
+	l, err := m.lib(sid)
+	if err != nil {
+		return err
+	}
+	return l.RemoveFromPlaylist(ctx, raw, index)
+}
+
+func (m *Library) MovePlaylistTrack(ctx context.Context, id string, from, to int) error {
+	sid, raw := split(id, m.Current().ID)
+	l, err := m.lib(sid)
+	if err != nil {
+		return err
+	}
+	return l.MovePlaylistTrack(ctx, raw, from, to)
+}

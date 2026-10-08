@@ -3,6 +3,7 @@ package multi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -38,6 +39,22 @@ func (f *fake) CreatePlaylist(_ context.Context, name string, ts []library.Track
 		return library.Playlist{}, errors.New("down")
 	}
 	return library.Playlist{ID: "new-" + f.id, Name: name, TrackCount: len(ts), Server: f.id}, nil
+}
+func (f *fake) AddToPlaylist(_ context.Context, id string, ts []library.Track) error {
+	ids := make([]string, len(ts))
+	for i, t := range ts {
+		ids[i] = t.ID
+	}
+	f.calls = append(f.calls, "padd:"+id+":"+strings.Join(ids, ","))
+	return nil
+}
+func (f *fake) RemoveFromPlaylist(_ context.Context, id string, i int) error {
+	f.calls = append(f.calls, fmt.Sprintf("premove:%s:%d", id, i))
+	return nil
+}
+func (f *fake) MovePlaylistTrack(_ context.Context, id string, from, to int) error {
+	f.calls = append(f.calls, fmt.Sprintf("pmove:%s:%d:%d", id, from, to))
+	return nil
 }
 
 func (f *fake) tag(a library.Artist) library.Artist { a.Server = f.id; return a }
@@ -222,5 +239,26 @@ func TestSaveQueueReportsAFailingServerAndKeepsTheRest(t *testing.T) {
 	}
 	if _, err := m.CreatePlaylist(context.Background(), "x", []library.Track{{ID: "A:1", Server: "A"}, {ID: "B:1", Server: "B"}}); err == nil {
 		t.Fatal("CreatePlaylist on mixed servers must refuse")
+	}
+}
+
+func TestPlaylistEditsRouteAndStripQualifiers(t *testing.T) {
+	a, b := &fake{id: "A"}, &fake{id: "B"}
+	m := New()
+	m.Add(Server{ID: "A", Name: "Mine"}, a)
+	m.Add(Server{ID: "B", Name: "Friend"}, b)
+	if err := m.AddToPlaylist(context.Background(), "B:p7", []library.Track{{ID: "B:1", Server: "B"}, {ID: "B:2", Server: "B"}}); err != nil {
+		t.Fatal(err)
+	}
+	if b.calls[len(b.calls)-1] != "padd:p7:1,2" || len(a.calls) != 0 {
+		t.Fatalf("calls A=%v B=%v", a.calls, b.calls)
+	}
+	if err := m.AddToPlaylist(context.Background(), "B:p7", []library.Track{{ID: "A:1", Server: "A"}}); err == nil || !strings.Contains(err.Error(), "another server") {
+		t.Fatalf("cross-server add must refuse: %v", err)
+	}
+	_ = m.RemoveFromPlaylist(context.Background(), "A:p1", 2)
+	_ = m.MovePlaylistTrack(context.Background(), "A:p1", 2, 0)
+	if a.calls[len(a.calls)-2] != "premove:p1:2" || a.calls[len(a.calls)-1] != "pmove:p1:2:0" {
+		t.Fatalf("A calls = %v", a.calls)
 	}
 }

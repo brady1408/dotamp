@@ -74,5 +74,11 @@ type Library interface {
 	// CreatePlaylist makes a new playlist holding tracks, in order, and
 	// returns it. Every track must belong to this library.
 	CreatePlaylist(ctx context.Context, name string, tracks []Track) (Playlist, error)
+	// AddToPlaylist appends tracks, in order, to the playlist.
+	AddToPlaylist(ctx context.Context, playlistID string, tracks []Track) error
+	// RemoveFromPlaylist drops the entry at position index (0-based).
+	RemoveFromPlaylist(ctx context.Context, playlistID string, index int) error
+	// MovePlaylistTrack moves the entry at from so it sits at position to.
+	MovePlaylistTrack(ctx context.Context, playlistID string, from, to int) error
 	Stream(ctx context.Context, t Track) (Stream, error)
 }
