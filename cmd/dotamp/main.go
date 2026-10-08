@@ -34,6 +34,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	debugLog := flag.Bool("debug", false, "log every HTTP request and source locations")
+	silent := flag.Bool("silent", false, "run without a sound device; the visualizers still move (for demos and headless machines)")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("dotamp", version)
@@ -51,7 +52,7 @@ func main() {
 	case "navidrome":
 		err = addNavidrome(flag.Arg(1), flag.Arg(2))
 	case "":
-		err = run(*debugLog)
+		err = run(*debugLog, *silent)
 	default:
 		err = fmt.Errorf("unknown command %q (try: dotamp login, dotamp servers, dotamp navidrome URL USER)", flag.Arg(0))
 	}
@@ -459,7 +460,7 @@ func resolveServer(ctx context.Context, cfg *config.Config) (name, url string, c
 	return srv.Name, cn.URI, cn, nil
 }
 
-func run(debugLog bool) (err error) {
+func run(debugLog, silent bool) (err error) {
 	cfg, err := config.Load()
 	if errors.Is(err, config.ErrNotFound) || (err != nil && strings.Contains(err.Error(), "dotamp login")) {
 		cfg, err = setup()
@@ -555,12 +556,19 @@ func run(debugLog bool) (err error) {
 	if rate < 8000 || rate > 384000 {
 		return fmt.Errorf("output_rate %d is not a sample rate the device can use", rate)
 	}
-	out, err := audio.NewOtoOutput(rate)
-	if err != nil {
-		return fmt.Errorf("audio device at %d Hz: %w", rate, err)
+	var out audio.Output
+	if silent {
+		out = audio.NewSilentOutput(rate)
+		log.Printf("output: silent at %d Hz", rate)
+	} else {
+		o, err := audio.NewOtoOutput(rate)
+		if err != nil {
+			return fmt.Errorf("audio device at %d Hz: %w", rate, err)
+		}
+		out = o
+		log.Printf("output: %d Hz, 32-bit float", rate)
 	}
 	eng := audio.NewEngine(out, rate)
-	log.Printf("output: %d Hz, 32-bit float", rate)
 	defer eng.Close()
 	eng.SetVolume(cfg.Volume)
 

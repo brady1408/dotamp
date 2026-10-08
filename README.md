@@ -2,6 +2,18 @@
 
 A terminal music player drawn in dots. Plays your Plex or Navidrome library, Winamp-shaped, with four visualizers drawn in braille, in any modern terminal.
 
+![dotamp playing with the oscilloscope view](docs/scope.gif)
+
+| Spectrum bars | Spectrogram |
+|---|---|
+| ![spectrum bars](docs/bars.png) | ![spectrogram](docs/spectrogram.png) |
+| **Oscilloscope** | **Stereo field** |
+| ![oscilloscope](docs/scope.png) | ![stereo field](docs/stereo.png) |
+
+Search asks every server at once and groups what it finds:
+
+![search results](docs/search.png)
+
 ## Install
 
 Homebrew builds it locally, so there is no unsigned-binary warning:
@@ -79,6 +91,8 @@ The one you leave it on is remembered.
 
 The log lives at `~/Library/Caches/dotamp/dotamp.log` on macOS and `~/.cache/dotamp/dotamp.log` elsewhere. `dotamp --debug` adds every HTTP request to it.
 
+`dotamp --silent` runs without a sound device: nothing is heard, but the visualizers move exactly as they would over speakers. It is how the pictures above are made, and it lets dotamp run on a box with no audio.
+
 ## Terminals
 
 Any terminal with truecolor, mouse reporting and a font that has braille: iTerm2, Ghostty, Kitty, WezTerm, Windows Terminal with Cascadia Mono. The analyzer's colours come from your terminal's palette.
@@ -93,6 +107,7 @@ On macOS 15 and later the terminal app needs Local Network access the first time
     make mac        # darwin/arm64
     make windows    # windows/amd64
     make test
+    make demo       # re-record the pictures in docs/ (needs vhs, ttyd, Chrome, Iosevka)
 
 Pure Go, no cgo, on every platform.
 

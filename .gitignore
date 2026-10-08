@@ -2,3 +2,4 @@
 /dist/
 *.log
 /.superpowers/
+/docs/*.mp4
