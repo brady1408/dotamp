@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/brady1408/dotamp/internal/library"
 	"github.com/brady1408/dotamp/internal/multi"
@@ -34,6 +35,14 @@ type Browser struct {
 	lib   library.Library
 	sw    Switcher // nil when there is a single, unnamed server
 	stack []view
+
+	// Album rows carry a quality tag taken from the album's first track.
+	// Servers only report format per track, so tags are fetched in the
+	// background for the albums in view and cached for the session.
+	qmu     sync.Mutex
+	quality map[string]string   // album ID -> tag ("" once known to be empty)
+	pending map[string]struct{} // fetches in flight
+	qlimit  chan struct{}       // caps concurrent fetches
 }
 
 // SetSwitcher enables the Servers menu and names servers in search results.
@@ -91,7 +100,9 @@ type artistIndex struct {
 	loaded  map[int]bool // page number -> fetched
 }
 
-func NewBrowser(lib library.Library) *Browser { return &Browser{lib: lib} }
+func NewBrowser(lib library.Library) *Browser {
+	return &Browser{lib: lib, quality: map[string]string{}, pending: map[string]struct{}{}, qlimit: make(chan struct{}, 4)}
+}
 
 func (b *Browser) top() *view {
 	if len(b.stack) == 0 {
@@ -272,13 +283,64 @@ func (b *Browser) ensure(ctx context.Context, v *view, i int) error {
 // Prepare loads the rows around the selection before a draw of height h.
 func (b *Browser) Prepare(ctx context.Context, h int) {
 	v := b.top()
-	if v == nil || v.artists == nil {
+	if v == nil {
+		return
+	}
+	b.tagAlbums(ctx, v, h)
+	if v.artists == nil {
 		return
 	}
 	for i := v.list.Sel - h; i <= v.list.Sel+h; i += artistPage {
 		_ = b.ensure(ctx, v, i)
 	}
 	_ = b.ensure(ctx, v, v.list.Sel+h)
+}
+
+// tagAlbums applies cached quality tags to the album rows in view and
+// starts a fetch for the ones not known yet. Tags land on a later draw.
+func (b *Browser) tagAlbums(ctx context.Context, v *view, h int) {
+	lo, hi := max(v.list.Top-h, 0), min(v.list.Top+2*h, len(v.list.Rows))
+	for i := lo; i < hi; i++ {
+		r := &v.list.Rows[i]
+		if r.Album == nil || r.tagged {
+			continue
+		}
+		b.qmu.Lock()
+		tag, known := b.quality[r.Album.ID]
+		_, inflight := b.pending[r.Album.ID]
+		if !known && !inflight {
+			b.pending[r.Album.ID] = struct{}{}
+		}
+		b.qmu.Unlock()
+		switch {
+		case known:
+			r.tagged = true
+			if tag != "" {
+				if r.Right != "" {
+					r.Right += "  "
+				}
+				r.Right += tag
+			}
+		case !inflight:
+			go b.fetchTag(ctx, r.Album.ID)
+		}
+	}
+}
+
+func (b *Browser) fetchTag(ctx context.Context, albumID string) {
+	b.qlimit <- struct{}{}
+	defer func() { <-b.qlimit }()
+	ts, err := b.lib.AlbumTracks(ctx, albumID)
+	tag := ""
+	if err == nil && len(ts) > 0 {
+		tag = ts[0].Quality()
+	}
+	b.qmu.Lock()
+	if err == nil {
+		b.quality[albumID] = tag
+	}
+	delete(b.pending, albumID)
+	b.qmu.Unlock()
 }
 
 // JumpLetter moves the selection to the first artist under r in the Artists

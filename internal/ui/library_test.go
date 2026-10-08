@@ -3,7 +3,9 @@ package ui
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 
@@ -236,5 +238,64 @@ func TestReloadPlaylistsOnlyWhenOnTop(t *testing.T) {
 	b.ReloadPlaylists(ctx)
 	if len(b.stack) != depth || b.Title() != "Road Trip" {
 		t.Fatal("reload must leave a deeper view alone")
+	}
+}
+
+// countingLib counts AlbumTracks calls and answers with a FLAC track.
+type countingLib struct {
+	stubLib
+	mu    sync.Mutex
+	calls []string
+}
+
+func (c *countingLib) AlbumTracks(_ context.Context, id string) ([]library.Track, error) {
+	c.mu.Lock()
+	c.calls = append(c.calls, id)
+	c.mu.Unlock()
+	if id == "2" {
+		return []library.Track{{ID: "t2", Codec: "mp3", Bitrate: 320}}, nil
+	}
+	return []library.Track{{ID: "t1", Codec: "flac", SampleRate: 44100, BitDepth: 16}}, nil
+}
+
+func (c *countingLib) count() int { c.mu.Lock(); defer c.mu.Unlock(); return len(c.calls) }
+
+func TestAlbumRowsGainAQualityTagOnce(t *testing.T) {
+	lib := &countingLib{}
+	b := NewBrowser(lib)
+	ctx := context.Background()
+	_ = b.LoadRoot(ctx)
+	_ = b.LoadRecent(ctx) // header + Recent One (id 1) + Recent Two (id 2)
+	if r := b.List().Rows[1].Right; strings.Contains(r, "FLAC") {
+		t.Fatalf("tags are fetched lazily, not at load: %q", r)
+	}
+	b.Prepare(ctx, 10)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		b.Prepare(ctx, 10)
+		r1, r2 := b.List().Rows[1].Right, b.List().Rows[2].Right
+		if strings.Contains(r1, "FLAC 16/44.1") && strings.Contains(r2, "MP3 320k") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tags never arrived: %q %q", r1, r2)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	before := lib.count()
+	b.Prepare(ctx, 10)
+	b.Prepare(ctx, 10)
+	time.Sleep(20 * time.Millisecond)
+	if lib.count() != before || before != 2 {
+		t.Fatalf("each album is asked once: %d then %d", before, lib.count())
+	}
+	// A later view of the same album reuses the cache.
+	_ = b.Search(ctx, "nsync") // the stub's search album has id 200, unknown so far
+	b.Prepare(ctx, 10)
+	_ = b.Back(ctx)
+	_ = b.LoadRecent(ctx)
+	b.Prepare(ctx, 10)
+	if r := b.List().Rows[1].Right; !strings.Contains(r, "FLAC 16/44.1") {
+		t.Fatalf("cached tag should apply at once: %q", r)
 	}
 }

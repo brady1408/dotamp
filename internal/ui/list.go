@@ -19,6 +19,7 @@ type Row struct {
 	Artist      *library.Artist
 	Playlist    *library.Playlist
 	Playing     bool
+	tagged      bool // the album's quality tag has been applied to Right
 }
 
 type List struct {
