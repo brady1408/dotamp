@@ -72,6 +72,10 @@ func (c *Client) put(ctx context.Context, path string, q url.Values, out *contai
 	return c.do(ctx, http.MethodPut, path, q, out)
 }
 
+func (c *Client) delete(ctx context.Context, path string, q url.Values, out *container) error {
+	return c.do(ctx, http.MethodDelete, path, q, out)
+}
+
 func (c *Client) do(ctx context.Context, method, path string, q url.Values, out *container) error {
 	u := c.server + path
 	if len(q) > 0 {

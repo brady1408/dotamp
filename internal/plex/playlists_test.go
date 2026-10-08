@@ -143,3 +143,90 @@ func TestMachineIDIsFetchedOnce(t *testing.T) {
 type roundTrip func(*http.Request) (*http.Response, error)
 
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// editServer answers /identity and the items listing, and records every
+// PUT and DELETE under /playlists/901.
+func editServer(t *testing.T) (*httptest.Server, *[]*http.Request) {
+	t.Helper()
+	var seen []*http.Request
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/identity":
+			b, _ := os.ReadFile("testdata/identity.json")
+			_, _ = w.Write(b)
+		case r.Method == http.MethodGet && r.URL.Path == "/playlists/901/items":
+			b, _ := os.ReadFile("testdata/playlist-items-ids.json")
+			_, _ = w.Write(b)
+		case (r.Method == http.MethodPut || r.Method == http.MethodDelete) && strings.HasPrefix(r.URL.Path, "/playlists/901/items"):
+			seen = append(seen, r)
+			_, _ = w.Write([]byte(`{"MediaContainer":{"size":0}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(s.Close)
+	return s, &seen
+}
+
+func TestAddToPlaylistPutsKeysInOrder(t *testing.T) {
+	s, seen := editServer(t)
+	c := New(s.URL, "tok", "cid")
+	if err := c.AddToPlaylist(context.Background(), "901", []library.Track{{ID: "7"}, {ID: "8"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*seen) != 1 || (*seen)[0].Method != http.MethodPut {
+		t.Fatalf("one PUT expected: %d", len(*seen))
+	}
+	if uri := (*seen)[0].URL.Query().Get("uri"); !strings.HasSuffix(uri, "/library/metadata/7,8") {
+		t.Fatalf("uri = %q", uri)
+	}
+}
+
+func TestRemoveFromPlaylistDeletesTheItemAtIndex(t *testing.T) {
+	s, seen := editServer(t)
+	c := New(s.URL, "tok", "cid")
+	if err := c.RemoveFromPlaylist(context.Background(), "901", 1); err != nil {
+		t.Fatal(err)
+	}
+	if len(*seen) != 1 || (*seen)[0].Method != http.MethodDelete || (*seen)[0].URL.Path != "/playlists/901/items/9002" {
+		t.Fatalf("expected DELETE of item 9002, got %+v", *seen)
+	}
+	if err := c.RemoveFromPlaylist(context.Background(), "901", 3); err == nil || !strings.Contains(err.Error(), "3 entries") {
+		t.Fatalf("out of range must fail before any write: %v", err)
+	}
+	if len(*seen) != 1 {
+		t.Fatal("no write for an out-of-range index")
+	}
+}
+
+func TestMovePlaylistTrackNamesThePredecessor(t *testing.T) {
+	s, seen := editServer(t)
+	c := New(s.URL, "tok", "cid")
+	// Move the last entry (9003) up one: it should sit after 9001.
+	if err := c.MovePlaylistTrack(context.Background(), "901", 2, 1); err != nil {
+		t.Fatal(err)
+	}
+	r := (*seen)[0]
+	if r.Method != http.MethodPut || r.URL.Path != "/playlists/901/items/9003/move" || r.URL.Query().Get("after") != "9001" {
+		t.Fatalf("move = %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+	}
+	// Move the second entry (9002) to the top: no after.
+	if err := c.MovePlaylistTrack(context.Background(), "901", 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	r = (*seen)[1]
+	if r.URL.Path != "/playlists/901/items/9002/move" || r.URL.Query().Has("after") {
+		t.Fatalf("to top = %s?%s", r.URL.Path, r.URL.RawQuery)
+	}
+	// Move the first entry (9001) down one: it should sit after 9002.
+	if err := c.MovePlaylistTrack(context.Background(), "901", 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	if r = (*seen)[2]; r.URL.Path != "/playlists/901/items/9001/move" || r.URL.Query().Get("after") != "9002" {
+		t.Fatalf("down = %s?%s", r.URL.Path, r.URL.RawQuery)
+	}
+	if err := c.MovePlaylistTrack(context.Background(), "901", 0, 5); err == nil {
+		t.Fatal("out of range must fail")
+	}
+}

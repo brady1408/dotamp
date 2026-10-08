@@ -24,6 +24,7 @@ type hub struct {
 
 type metadata struct {
 	RatingKey        string  `json:"ratingKey"`
+	PlaylistItemID   int64   `json:"playlistItemID"`
 	Title            string  `json:"title"`
 	Index            int     `json:"index"`
 	ParentTitle      string  `json:"parentTitle"`
