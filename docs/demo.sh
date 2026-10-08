@@ -3,7 +3,7 @@
 # records with asciinema, renders with agg (which draws braille itself, so
 # the dots tile at any line height), and converts single frames to PNG with
 # ffmpeg. Needs tmux, asciinema, agg, ffmpeg, the Iosevka font, a dotamp on
-# PATH, and a configured library that has Linkin Park's One More Light.
+# PATH, and a configured library that has Michael Jackson's Thriller.
 # RENDER_ONLY=1 reuses the recordings in docs/*.cast.
 set -e
 cd "$(dirname "$0")/.."
@@ -27,16 +27,15 @@ record() { # start recording docs/$1.cast in a detached tmux session
 	tmux new-session -d -s dotamp-demo -x 140 -y 26 \
 		"asciinema rec --window-size $SIZE -c 'dotamp --silent' docs/$1.cast"
 }
-# search, open the album, play One More Light (track 9), show the Queue,
-# seek into the chorus: about 12 s
+# search, open the album, play Billie Jean (track 6), show the Queue: about 11 s
 open_track() {
 	sleep 3
-	keys / ; sleep 0.3; keys 'one more light' Enter; sleep 3
+	keys / ; sleep 0.3; keys 'thriller' Enter; sleep 3
 	keys Enter; sleep 2
-	for _ in 1 2 3 4 5 6 7 8; do keys Down; sleep 0.1; done
+	for _ in 1 2 3 4 5; do keys Down; sleep 0.1; done
 	keys Enter; sleep 1; keys Tab; sleep 0.5
-	for _ in 1 2 3 4 5 6 7 8 9 10; do keys Right; sleep 0.1; done
 }
+seek() { for _ in $(seq "$1"); do keys Right; sleep 0.1; done; }   # 5 s per step
 finish() { keys q; sleep 2; }
 still() { # still CAST SECONDS NAME
 	$AGG --theme "$THEME" --select "$2" --last-frame-duration 0.1 "docs/$1.cast" docs/_still.gif
@@ -48,6 +47,7 @@ if [ -z "$RENDER_ONLY" ]; then
 	reset_visual
 	record demo
 	open_track
+	seek 14                    # into the chorus
 	sleep 8                    # bars
 	keys v; sleep 8            # scope
 	keys v; sleep 12           # spectrogram
@@ -57,6 +57,7 @@ if [ -z "$RENDER_ONLY" ]; then
 	reset_visual
 	record scope
 	open_track
+	seek 2                     # the bass-and-drums intro
 	sleep 2
 	keys v; sleep 14           # scope, held for the clip
 	finish
@@ -65,6 +66,6 @@ fi
 still demo 5 search
 still demo 18 bars
 still demo 38 spectrogram
-still demo 47 stereo
+still demo 41 stereo
 still scope 22 scope
 $AGG --theme "$THEME" --select 17..23 --last-frame-duration 0.05 docs/scope.cast docs/scope.gif
