@@ -2,6 +2,9 @@ package ui
 
 import "github.com/gdamore/tcell/v2"
 
+// helpWidth is the overlay width; every line must fit it with the indent.
+const helpWidth = 56
+
 var helpLines = []string{
 	"space      play / pause",
 	"n / p      next / previous track",
@@ -21,7 +24,7 @@ var helpLines = []string{
 }
 
 func DrawHelp(s tcell.Screen, r Rect) {
-	w := 50
+	w := helpWidth
 	h := len(helpLines) + 2
 	x := r.X + max((r.W-w)/2, 0)
 	y := r.Y + max((r.H-h)/2, 0)

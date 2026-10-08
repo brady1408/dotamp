@@ -312,3 +312,35 @@ func TestSaveNoticeWording(t *testing.T) {
 		}
 	}
 }
+
+type repeatLib struct{ stubLib }
+
+func (repeatLib) PlaylistTracks(context.Context, string) ([]library.Track, error) {
+	return []library.Track{{ID: "300", Title: "Bye Bye Bye"}, {ID: "301", Title: "It's Gonna Be Me"}, {ID: "300", Title: "Bye Bye Bye"}}, nil
+}
+
+func TestEnterOnARepeatedPlaylistTrackStartsAtThatCopy(t *testing.T) {
+	app, _, _ := newApp(t)
+	app.lib = repeatLib{}
+	app.browser = NewBrowser(repeatLib{})
+	_ = app.browser.LoadRoot(context.Background())
+	key(app, tcell.KeyTab, 0)
+	key(app, tcell.KeyDown, 0)
+	key(app, tcell.KeyDown, 0)
+	key(app, tcell.KeyEnter, 0) // Playlists
+	key(app, tcell.KeyEnter, 0) // open the first playlist
+	key(app, tcell.KeyDown, 0)
+	key(app, tcell.KeyDown, 0) // the second copy of 300, at position 3
+	key(app, tcell.KeyEnter, 0)
+	if i := app.ctrl.Index(); i != 2 {
+		t.Fatalf("playback should start at the row pressed, index 2, got %d", i)
+	}
+}
+
+func TestHelpLinesFitTheOverlay(t *testing.T) {
+	for _, l := range helpLines {
+		if n := len([]rune("  " + l)); n > helpWidth {
+			t.Errorf("help line %q is %d columns, the overlay is %d", l, n, helpWidth)
+		}
+	}
+}

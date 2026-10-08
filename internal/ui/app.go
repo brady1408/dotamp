@@ -305,12 +305,20 @@ func (a *App) activate(ctx context.Context, row *Row, appendOnly bool) {
 			a.setNotice("Added " + row.Track.Title)
 			return
 		}
-		if ts, ok := a.browser.AlbumContext(); ok { // play the album from this track
+		if ts, ok := a.browser.AlbumContext(); ok { // play the album or playlist from this track
+			start := -1
 			for i := range ts {
-				if ts[i].ID == row.Track.ID {
-					a.run(a.ctrl.PlayTracks(ctx, ts, i))
-					return
+				if &ts[i] == row.Track { // rows point into the view's own slice
+					start = i
+					break
 				}
+				if start < 0 && ts[i].ID == row.Track.ID { // a playlist may repeat a track
+					start = i
+				}
+			}
+			if start >= 0 {
+				a.run(a.ctrl.PlayTracks(ctx, ts, start))
+				return
 			}
 		}
 		a.run(a.ctrl.PlayTracks(ctx, []library.Track{*row.Track}, 0))
