@@ -44,6 +44,20 @@ type SearchResult struct {
 	Tracks  []Track
 }
 
+// Playlist is one of the user's playlists on a server.
+type Playlist struct {
+	ID, Name   string
+	TrackCount int
+	Server     string // which server it lives on
+}
+
+// Saved is one server's share of a saved queue.
+type Saved struct {
+	Server   string // server ID
+	Playlist Playlist
+	Tracks   int
+}
+
 type Library interface {
 	Search(ctx context.Context, query string) (SearchResult, error)
 	RecentAlbums(ctx context.Context, offset, limit int) ([]Album, error)
