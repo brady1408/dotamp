@@ -1,7 +1,7 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package mediakeys
 
 import "context"
 
-func listen(context.Context, Handler) error { return nil }
+func listen(context.Context, Player) error { return nil }

@@ -615,17 +615,7 @@ func run(debugLog, silent bool) (err error) {
 	if !cfg.NoMediaKeys {
 		go func() {
 			defer guard("media keys")
-			err := mediakeys.Listen(ctx, func(act mediakeys.Action) {
-				switch act {
-				case mediakeys.PlayPause:
-					ctrl.TogglePause()
-				case mediakeys.Next:
-					_ = ctrl.Next(ctx)
-				case mediakeys.Prev:
-					_ = ctrl.Prev(ctx)
-				}
-			})
-			if err != nil {
+			if err := mediakeys.Listen(ctx, mediaPlayer{ctx: ctx, ctrl: ctrl, eng: eng}); err != nil {
 				log.Printf("%v", err)
 			}
 		}()
@@ -641,4 +631,28 @@ func run(debugLog, silent bool) (err error) {
 	default:
 	}
 	return err
+}
+
+// mediaPlayer lets the media keys drive the controller and lets the desktop
+// read what is playing.
+type mediaPlayer struct {
+	ctx  context.Context
+	ctrl *audio.Controller
+	eng  *audio.Engine
+}
+
+func (m mediaPlayer) Handle(act mediakeys.Action) {
+	switch act {
+	case mediakeys.PlayPause:
+		m.ctrl.TogglePause()
+	case mediakeys.Next:
+		_ = m.ctrl.Next(m.ctx)
+	case mediakeys.Prev:
+		_ = m.ctrl.Prev(m.ctx)
+	}
+}
+
+func (m mediaPlayer) State() mediakeys.State {
+	cur, has := m.ctrl.Current()
+	return mediakeys.State{HasTrack: has, Playing: m.eng.Playing(), Title: cur.Title, Artist: cur.Artist, Album: cur.Album, Length: cur.Duration}
 }

@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/ebitengine/oto/v3 v3.5.1
 	github.com/gdamore/tcell/v2 v2.13.10
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/mewkiz/flac v1.0.14
 	github.com/rivo/uniseg v0.4.7

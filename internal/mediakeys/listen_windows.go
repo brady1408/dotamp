@@ -40,7 +40,7 @@ type msg struct {
 // thread (hotkeys belong to the thread that registers them) and pumps that
 // thread's message queue. A key another program already holds is skipped
 // with a log line; the rest still work.
-func listen(ctx context.Context, h Handler) error {
+func listen(ctx context.Context, p Player) error {
 	keys := []uint32{vkMediaPlayPause, vkMediaNextTrack, vkMediaPrevTrack}
 	tid := make(chan uintptr, 1)
 	done := make(chan error, 1)
@@ -72,7 +72,7 @@ func listen(ctx context.Context, h Handler) error {
 			if m.message == wmHotkey {
 				idx := int(m.wParam) - 1
 				if idx >= 0 && idx < len(keys) {
-					h(actionFor(keys[idx]))
+					p.Handle(actionFor(keys[idx]))
 				}
 			}
 		}
