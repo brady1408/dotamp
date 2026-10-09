@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"math"
-
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -33,7 +31,6 @@ func ParseMode(name string) (Mode, bool) {
 const (
 	scopeSamplesPerDot = 4   // 80 columns show about 15 ms at 44.1 kHz
 	scopeTriggerSearch = 512 // samples ahead of the window in which a trigger is looked for
-	scopeGate          = 1.5 // dots: swings smaller than this draw on the centre line
 )
 
 // scopeTrace returns one vertical dot position per horizontal dot: the most
@@ -68,14 +65,13 @@ func (a *Analyzer) scopeTrace(dotW int) []int {
 		} else if v < -1 {
 			v = -1
 		}
-		// A real recording never sits still: the last fraction of a dot
-		// flickers constantly and reads as nerves. Flatten swings within
-		// the gate so quiet passages draw as the calm line they sound like.
-		d := v * swing
-		if math.Abs(d) < scopeGate {
-			d = 0
-		}
-		y := centre - int(math.Round(d))
+		// Deliberately lopsided rounding: the top half rounds normally, the
+		// bottom half truncates toward the centre, so the negative side
+		// sits one dot high and its smallest swings flatten onto the
+		// centre line. A real recording never sits still, and this is what
+		// makes quiet passages read as calm rather than nervous. A
+		// symmetric gate was tried and drew a ruler-straight line instead.
+		y := centre - int(v*swing+0.5)
 		if y < 0 {
 			y = 0
 		}

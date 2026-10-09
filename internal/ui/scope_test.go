@@ -133,50 +133,27 @@ func TestScopeFillsAWideWindow(t *testing.T) {
 	}
 }
 
-// TestScopeRoundsNegativeSwingsLikePositiveOnes: a -1 sample must sit as
-// far below the centre as a +1 sample sits above it. Truncating toward
-// zero used to leave the bottom of the wave one dot short.
-func TestScopeRoundsNegativeSwingsLikePositiveOnes(t *testing.T) {
-	a := NewAnalyzer(silent{})
-	a.SetMode(ModeScope)
-	a.Update(4, 2) // 8 dots wide, 8 dots tall: centre row 4, swing 3
-	dotW := a.cv.DotW()
-	a.trace = make([]float64, dotW*scopeSamplesPerDot+scopeTriggerSearch)
-	a.trace[0] = -1 // the rising crossing is at index 1
-	for i := 1; i < len(a.trace); i++ {
-		if i < 1+scopeSamplesPerDot {
-			a.trace[i] = 1
-		} else {
-			a.trace[i] = -1
-		}
-	}
-	got := a.scopeTrace(dotW)
-	if got[0] != 1 || got[1] != 7 {
-		t.Fatalf("+1 should map to row 1 and -1 to row 7, got %d and %d", got[0], got[1])
-	}
-}
-
-// TestScopeGatesSmallSwingsOntoTheCentreLine: the dot-level flicker of a
-// quiet signal draws as a flat line, on both sides of the centre, while a
-// swing past the gate rounds normally.
-func TestScopeGatesSmallSwingsOntoTheCentreLine(t *testing.T) {
+// TestScopeRoundingIsLopsidedOnPurpose: the top half rounds normally, the
+// bottom half truncates toward the centre. That leaves -1 one dot short
+// of the edge and flattens the smallest negative swings, which is what
+// keeps the trace calm; Brady preferred it to symmetric rounding and to
+// a symmetric gate (which drew a solid centre line). Do not "fix" it.
+func TestScopeRoundingIsLopsidedOnPurpose(t *testing.T) {
 	a := NewAnalyzer(silent{})
 	a.SetMode(ModeScope)
 	a.Update(4, 2) // centre row 4, swing 3 dots
 	dotW := a.cv.DotW()
 	a.trace = make([]float64, dotW*scopeSamplesPerDot+scopeTriggerSearch)
-	small := (scopeGate - 0.1) / 3 // just inside the gate, in sample units
-	big := (scopeGate + 0.1) / 3   // just outside it
-	vals := []float64{small, -small, big, -big}
-	a.trace[0] = -1 // the rising crossing is at index 1
+	vals := []float64{1, -1, 0.4 / 3, -1.4 / 3} // full up, full down, a small up, a small down
+	a.trace[0] = -1                             // the rising crossing is at index 1
 	for i := 1; i < len(a.trace); i++ {
 		a.trace[i] = vals[((i-1)/scopeSamplesPerDot)%len(vals)]
 	}
 	got := a.scopeTrace(dotW)
-	if got[0] != 4 || got[1] != 4 {
-		t.Fatalf("small swings either side should sit on the centre: %v", got[:4])
+	if got[0] != 1 || got[1] != 6 {
+		t.Fatalf("+1 reaches row 1, -1 stops at row 6: %v", got[:4])
 	}
-	if got[2] != 2 || got[3] != 6 {
-		t.Fatalf("swings past the gate round normally and symmetrically: %v", got[:4])
+	if got[2] != 4 || got[3] != 4 {
+		t.Fatalf("small swings below half a dot up or 1.5 dots down sit on the centre: %v", got[:4])
 	}
 }
