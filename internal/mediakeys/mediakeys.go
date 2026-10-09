@@ -3,8 +3,9 @@
 // terminal never sees those keys: the operating system hands them to
 // whatever registered for them, so each platform registers in its own way.
 // Windows registers global hotkeys; Linux registers an MPRIS player on the
-// session bus, which is where desktops send media keys; macOS is not wired
-// yet and Listen returns at once there.
+// session bus, which is where desktops send media keys; macOS registers
+// with Now Playing through MediaPlayer.framework and needs RunMain to spin
+// the main thread's run loop.
 package mediakeys
 
 import (

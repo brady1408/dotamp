@@ -1,7 +1,7 @@
 github.com/ebitengine/oto/v3 v3.5.1 h1:7gL5DxxSQp8S1Me2jDSp+gSAyondYxpjM5RPBBqLT0c=
 github.com/ebitengine/oto/v3 v3.5.1/go.mod h1:Elkm7yzTRns3w2efvibzVOoQ65YOwmec9a76dCiK10o=
-github.com/ebitengine/purego v0.11.0 h1:jhp/D+Nyv7UUW8HAcmcjt2N2rYrYi9m3SL21k0Ua/NI=
-github.com/ebitengine/purego v0.11.0/go.mod h1:DCHPP08djqhNSoTfImcnHYQRZmd0qhakvrozqaEYhGQ=
+github.com/ebitengine/purego v0.11.1 h1:2zpWRSQNVKN4eKsKO9eM1ILDgWfYMY9GwqRmK6XeQ/0=
+github.com/ebitengine/purego v0.11.1/go.mod h1:DCHPP08djqhNSoTfImcnHYQRZmd0qhakvrozqaEYhGQ=
 github.com/gdamore/encoding v1.0.1 h1:YzKZckdBL6jVt2Gc+5p82qhrGiqMdG/eNs6Wy0u3Uhw=
 github.com/gdamore/encoding v1.0.1/go.mod h1:0Z0cMFinngz9kS1QfMjCP8TY7em3bZYeeklsSDPivEo=
 github.com/gdamore/tcell/v2 v2.13.10 h1:Afs3JKt83HnhuUKdZ3MnxUgOqQRWftj5JyDqv1LLynA=

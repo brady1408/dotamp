@@ -53,7 +53,7 @@ func main() {
 	case "navidrome":
 		err = addNavidrome(flag.Arg(1), flag.Arg(2))
 	case "":
-		err = run(*debugLog, *silent)
+		err = mediakeys.RunMain(func() error { return run(*debugLog, *silent) })
 	default:
 		err = fmt.Errorf("unknown command %q (try: dotamp login, dotamp servers, dotamp navidrome URL USER)", flag.Arg(0))
 	}
