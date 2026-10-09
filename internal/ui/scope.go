@@ -31,6 +31,7 @@ func ParseMode(name string) (Mode, bool) {
 const (
 	scopeSamplesPerDot = 4   // 80 columns show about 15 ms at 44.1 kHz
 	scopeTriggerSearch = 512 // samples ahead of the window in which a trigger is looked for
+	scopeGhostColor    = 22  // palette dark green: last frame's trace, like phosphor afterglow
 )
 
 // scopeTrace returns one vertical dot position per horizontal dot: the most
@@ -94,17 +95,31 @@ func (a *Analyzer) drawScope(s tcell.Screen, r Rect) {
 	dotH := a.cv.DotH()
 	centre := dotH / 2
 	trace := a.scopeTrace(a.cv.DotW())
+	// Last frame's trace first, dim, so the live one overwrites where they
+	// meet: the afterglow of a phosphor screen, which turns two frames the
+	// eye would blend into a single moving line with a soft tail.
+	if a.Afterglow && len(a.ghost) == len(trace) {
+		a.drawTrace(a.ghost, func(int) int { return scopeGhostColor })
+	}
+	a.drawTrace(trace, func(yy int) int {
+		swing := yy - centre
+		if swing < 0 {
+			swing = -swing
+		}
+		return colorFor(swing*2, dotH, false)
+	})
+	a.ghost = append(a.ghost[:0], trace...)
+	a.paint(s, r)
+}
+
+// drawTrace joins neighbouring columns so a steep edge is a line, not dots.
+func (a *Analyzer) drawTrace(trace []int, color func(y int) int) {
 	prev := trace[0]
 	for x, y := range trace {
 		lo, hi := min(prev, y), max(prev, y)
 		for yy := lo; yy <= hi; yy++ {
-			swing := yy - centre
-			if swing < 0 {
-				swing = -swing
-			}
-			a.cv.Set(x, yy, colorFor(swing*2, dotH, false))
+			a.cv.Set(x, yy, color(yy))
 		}
 		prev = y
 	}
-	a.paint(s, r)
 }

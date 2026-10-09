@@ -72,6 +72,9 @@ type Saver interface {
 	SaveQueue(ctx context.Context, name string, tracks []library.Track) ([]library.Saved, error)
 }
 
+// SetAfterglow turns the oscilloscope's phosphor-style ghost on or off.
+func (a *App) SetAfterglow(on bool) { a.an.Afterglow = on }
+
 // SetSaver enables w, saving the queue as a playlist.
 func (a *App) SetSaver(s Saver) { a.saver = s }
 

@@ -18,16 +18,17 @@ type Config struct {
 	Section  string  `json:"section,omitempty"`
 	Volume   float64 `json:"volume"`
 
-	AccountToken  string     `json:"account_token,omitempty"` // from `dotamp login`
-	ServerName    string     `json:"server_name,omitempty"`   // which of the account's servers to use; first owned when empty
-	LastServer    string     `json:"last_server,omitempty"`   // the connection discovery chose last time, for starts without plex.tv
-	LastToken     string     `json:"last_token,omitempty"`
-	LastServerID  string     `json:"last_server_id,omitempty"`
-	RemoteBitrate int        `json:"remote_bitrate,omitempty"` // kbps to transcode to on any non-local connection; 0 = original
-	Visual        string     `json:"visual,omitempty"`         // analyzer mode: "bars", "scope", "spectrogram" or "stereo"
-	Navidrome     *Navidrome `json:"navidrome,omitempty"`
-	OutputRate    int        `json:"output_rate,omitempty"`        // device sample rate; 44100 when unset. Match your DAC to avoid a second conversion.
-	NoMediaKeys   bool       `json:"disable_media_keys,omitempty"` // leave the keyboard's media keys to other programs
+	AccountToken   string     `json:"account_token,omitempty"` // from `dotamp login`
+	ServerName     string     `json:"server_name,omitempty"`   // which of the account's servers to use; first owned when empty
+	LastServer     string     `json:"last_server,omitempty"`   // the connection discovery chose last time, for starts without plex.tv
+	LastToken      string     `json:"last_token,omitempty"`
+	LastServerID   string     `json:"last_server_id,omitempty"`
+	RemoteBitrate  int        `json:"remote_bitrate,omitempty"` // kbps to transcode to on any non-local connection; 0 = original
+	Visual         string     `json:"visual,omitempty"`         // analyzer mode: "bars", "scope", "spectrogram" or "stereo"
+	Navidrome      *Navidrome `json:"navidrome,omitempty"`
+	OutputRate     int        `json:"output_rate,omitempty"`        // device sample rate; 44100 when unset. Match your DAC to avoid a second conversion.
+	NoMediaKeys    bool       `json:"disable_media_keys,omitempty"` // leave the keyboard's media keys to other programs
+	ScopeAfterglow bool       `json:"scope_afterglow,omitempty"`    // the oscilloscope keeps last frame's trace dim under the live one
 }
 
 // Navidrome is an optional second library on a Subsonic-compatible server.

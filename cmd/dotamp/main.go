@@ -590,6 +590,7 @@ func run(debugLog, silent bool) (err error) {
 	app.SetSwitcher(lib)
 	app.SetSaver(lib)
 	app.SetVisual(cfg.Visual)
+	app.SetAfterglow(cfg.ScopeAfterglow)
 	app.OnVisual = func(name string) {
 		cfg.Visual = name
 		_ = config.Save(cfg)

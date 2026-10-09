@@ -36,6 +36,10 @@ type Analyzer struct {
 	left    []float64 // the stereo field's window
 	right   []float64
 	trace   []float64 // the scope's window: as many samples as the width needs, plus room to find a trigger
+	ghost   []int     // the scope's previous trace, drawn dim under the live one for a frame
+
+	// Afterglow keeps the scope's previous trace on screen one frame longer, dim, like phosphor.
+	Afterglow bool
 }
 
 func NewAnalyzer(src SpectrumSource) *Analyzer {

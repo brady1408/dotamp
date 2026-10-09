@@ -98,6 +98,8 @@ The log lives at `~/Library/Caches/dotamp/dotamp.log` on macOS and `~/.cache/dot
 
 The keyboard's media keys, play/pause, next and previous, reach dotamp even when another window has focus. On Windows it registers them as global hotkeys at start, which takes them from other players while it runs. On Linux it registers as an MPRIS player on the session bus, so the desktop routes the keys to it and its media widget shows the track. On macOS it registers with Now Playing, so the keys, the Control Centre widget and the Touch Bar all drive it and show the track. Set `"disable_media_keys": true` in the config to opt out.
 
+`"scope_afterglow": true` keeps the oscilloscope's previous frame on screen a moment longer in a dim green under the live trace, the way a phosphor screen fades. Off by default; try both, opinions differ.
+
 `dotamp --silent` runs without a sound device: nothing is heard, but the visualizers move exactly as they would over speakers. It is how the pictures above are made, and it lets dotamp run on a box with no audio.
 
 ## Terminals

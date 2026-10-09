@@ -157,3 +157,59 @@ func TestScopeRoundingIsLopsidedOnPurpose(t *testing.T) {
 		t.Fatalf("small swings below half a dot up or 1.5 dots down sit on the centre: %v", got[:4])
 	}
 }
+
+// TestScopeKeepsAGhostOfTheLastFrame: the previous trace stays on screen
+// one frame longer in a dim colour under the live one, like phosphor.
+func TestScopeKeepsAGhostOfTheLastFrame(t *testing.T) {
+	s := sim(t, 4, 2)
+	a := NewAnalyzer(silent{})
+	a.SetMode(ModeScope)
+	a.Afterglow = true
+	a.Update(4, 2) // 8x8 dots, centre 4
+	n := a.cv.DotW()*scopeSamplesPerDot + scopeTriggerSearch
+	fill := func(v float64) {
+		a.trace = make([]float64, n)
+		a.trace[0] = -1 // a rising crossing at 1
+		for i := 1; i < n; i++ {
+			a.trace[i] = v
+		}
+	}
+	fill(1) // frame 1: a line along row 1
+	a.Draw(s, Rect{0, 0, 4, 2})
+	fill(-1) // frame 2: a line along row 6
+	a.Draw(s, Rect{0, 0, 4, 2})
+	// row 1 lives in cell row 0: it should still be lit, in the ghost colour
+	if ru, col := a.cv.Cell(1, 0); ru == 0x2800 || col != scopeGhostColor {
+		t.Fatalf("ghost of frame 1 missing or wrong colour: rune %U colour %d", ru, col)
+	}
+	// row 6 lives in cell row 1: the live trace, in a live colour
+	if ru, col := a.cv.Cell(1, 1); ru == 0x2800 || col == scopeGhostColor {
+		t.Fatalf("live trace should be bright: rune %U colour %d", ru, col)
+	}
+	fill(-1) // frame 3: same as frame 2, so the ghost of frame 1 is gone
+	a.Draw(s, Rect{0, 0, 4, 2})
+	if ru, _ := a.cv.Cell(1, 0); ru != 0x2800 {
+		t.Fatalf("the ghost lasts one frame only: rune %U", ru)
+	}
+}
+
+func TestScopeAfterglowIsOffByDefault(t *testing.T) {
+	s := sim(t, 4, 2)
+	a := NewAnalyzer(silent{})
+	a.SetMode(ModeScope)
+	a.Update(4, 2)
+	n := a.cv.DotW()*scopeSamplesPerDot + scopeTriggerSearch
+	a.trace = make([]float64, n)
+	a.trace[0] = -1
+	for i := 1; i < n; i++ {
+		a.trace[i] = 1
+	}
+	a.Draw(s, Rect{0, 0, 4, 2})
+	for i := 1; i < n; i++ {
+		a.trace[i] = -1
+	}
+	a.Draw(s, Rect{0, 0, 4, 2})
+	if ru, _ := a.cv.Cell(1, 0); ru != 0x2800 {
+		t.Fatalf("without afterglow last frame's line must be gone: %U", ru)
+	}
+}
