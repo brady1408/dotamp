@@ -467,6 +467,16 @@ func (c *Client) MovePlaylistTrack(ctx context.Context, id string, from, to int)
 	return err
 }
 
+func (c *Client) RenamePlaylist(ctx context.Context, id, name string) error {
+	_, err := c.call(ctx, "updatePlaylist", url.Values{"playlistId": {id}, "name": {name}})
+	return err
+}
+
+func (c *Client) DeletePlaylist(ctx context.Context, id string) error {
+	_, err := c.call(ctx, "deletePlaylist", url.Values{"id": {id}})
+	return err
+}
+
 func (c *Client) Stream(ctx context.Context, t library.Track) (library.Stream, error) {
 	bitrate := 0
 	if !c.local && c.remoteBitrate > 0 {

@@ -415,3 +415,21 @@ func (m *Library) MovePlaylistTrack(ctx context.Context, id string, from, to int
 	}
 	return l.MovePlaylistTrack(ctx, raw, from, to)
 }
+
+func (m *Library) RenamePlaylist(ctx context.Context, id, name string) error {
+	sid, raw := split(id, m.Current().ID)
+	l, err := m.lib(sid)
+	if err != nil {
+		return err
+	}
+	return l.RenamePlaylist(ctx, raw, name)
+}
+
+func (m *Library) DeletePlaylist(ctx context.Context, id string) error {
+	sid, raw := split(id, m.Current().ID)
+	l, err := m.lib(sid)
+	if err != nil {
+		return err
+	}
+	return l.DeletePlaylist(ctx, raw)
+}

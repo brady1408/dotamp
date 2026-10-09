@@ -179,3 +179,13 @@ func (c *Client) machineIdentifier(ctx context.Context) (string, error) {
 	c.machineID = out.MediaContainer.MachineIdentifier
 	return c.machineID, nil
 }
+
+func (c *Client) RenamePlaylist(ctx context.Context, id, name string) error {
+	var out container
+	return c.put(ctx, "/playlists/"+id, url.Values{"title": {name}}, &out)
+}
+
+func (c *Client) DeletePlaylist(ctx context.Context, id string) error {
+	var out container
+	return c.delete(ctx, "/playlists/"+id, nil, &out)
+}

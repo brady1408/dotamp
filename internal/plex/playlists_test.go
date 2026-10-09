@@ -230,3 +230,26 @@ func TestMovePlaylistTrackNamesThePredecessor(t *testing.T) {
 		t.Fatal("out of range must fail")
 	}
 }
+
+func TestRenameAndDeletePlaylist(t *testing.T) {
+	var seen []*http.Request
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaContainer":{"size":0}}`))
+	}))
+	defer s.Close()
+	c := New(s.URL, "tok", "cid")
+	if err := c.RenamePlaylist(context.Background(), "901", "Tea & Toast — été"); err != nil {
+		t.Fatal(err)
+	}
+	if r := seen[0]; r.Method != http.MethodPut || r.URL.Path != "/playlists/901" || r.URL.Query().Get("title") != "Tea & Toast — été" {
+		t.Fatalf("rename = %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+	}
+	if err := c.DeletePlaylist(context.Background(), "901"); err != nil {
+		t.Fatal(err)
+	}
+	if r := seen[1]; r.Method != http.MethodDelete || r.URL.Path != "/playlists/901" {
+		t.Fatalf("delete = %s %s", r.Method, r.URL.Path)
+	}
+}

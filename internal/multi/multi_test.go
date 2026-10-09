@@ -56,6 +56,14 @@ func (f *fake) MovePlaylistTrack(_ context.Context, id string, from, to int) err
 	f.calls = append(f.calls, fmt.Sprintf("pmove:%s:%d:%d", id, from, to))
 	return nil
 }
+func (f *fake) RenamePlaylist(_ context.Context, id, name string) error {
+	f.calls = append(f.calls, "prename:"+id+":"+name)
+	return nil
+}
+func (f *fake) DeletePlaylist(_ context.Context, id string) error {
+	f.calls = append(f.calls, "pdelete:"+id)
+	return nil
+}
 
 func (f *fake) tag(a library.Artist) library.Artist { a.Server = f.id; return a }
 
@@ -260,5 +268,17 @@ func TestPlaylistEditsRouteAndStripQualifiers(t *testing.T) {
 	_ = m.MovePlaylistTrack(context.Background(), "A:p1", 2, 0)
 	if a.calls[len(a.calls)-2] != "premove:p1:2" || a.calls[len(a.calls)-1] != "pmove:p1:2:0" {
 		t.Fatalf("A calls = %v", a.calls)
+	}
+}
+
+func TestRenameAndDeleteRoute(t *testing.T) {
+	a, b := &fake{id: "A"}, &fake{id: "B"}
+	m := New()
+	m.Add(Server{ID: "A", Name: "Mine"}, a)
+	m.Add(Server{ID: "B", Name: "Friend"}, b)
+	_ = m.RenamePlaylist(context.Background(), "B:p7", "New")
+	_ = m.DeletePlaylist(context.Background(), "B:p7")
+	if len(a.calls) != 0 || b.calls[0] != "prename:p7:New" || b.calls[1] != "pdelete:p7" {
+		t.Fatalf("calls A=%v B=%v", a.calls, b.calls)
 	}
 }

@@ -83,7 +83,7 @@ func fakeNavidrome(t *testing.T) (*httptest.Server, *[]*http.Request) {
 				id = q.Get("playlistId")
 			}
 			w.Write(ok(map[string]any{"playlist": map[string]any{"id": id, "name": q.Get("name"), "songCount": len(q["songId"])}}))
-		case "/rest/updatePlaylist":
+		case "/rest/updatePlaylist", "/rest/deletePlaylist":
 			w.Write(ok(nil))
 		default:
 			http.NotFound(w, r)
@@ -291,5 +291,24 @@ func TestMoveResendsTheReorderedList(t *testing.T) {
 	}
 	if err := c.MovePlaylistTrack(context.Background(), "p1", 0, 4); err == nil || !strings.Contains(err.Error(), "2 entries") {
 		t.Fatalf("out of range: %v", err)
+	}
+}
+
+func TestRenameAndDeleteUseTheSubsonicCalls(t *testing.T) {
+	s, seen := fakeNavidrome(t)
+	c := New(s.URL, "brady", "secret")
+	if err := c.RenamePlaylist(context.Background(), "p1", "Tea & Toast — été"); err != nil {
+		t.Fatal(err)
+	}
+	last := (*seen)[len(*seen)-1]
+	if last.URL.Path != "/rest/updatePlaylist" || last.URL.Query().Get("playlistId") != "p1" || last.URL.Query().Get("name") != "Tea & Toast — été" {
+		t.Fatalf("rename = %s %v", last.URL.Path, last.URL.Query())
+	}
+	if err := c.DeletePlaylist(context.Background(), "p1"); err != nil {
+		t.Fatal(err)
+	}
+	last = (*seen)[len(*seen)-1]
+	if last.URL.Path != "/rest/deletePlaylist" || last.URL.Query().Get("id") != "p1" {
+		t.Fatalf("delete = %s %v", last.URL.Path, last.URL.Query())
 	}
 }

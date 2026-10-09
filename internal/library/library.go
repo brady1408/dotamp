@@ -80,5 +80,9 @@ type Library interface {
 	RemoveFromPlaylist(ctx context.Context, playlistID string, index int) error
 	// MovePlaylistTrack moves the entry at from so it sits at position to.
 	MovePlaylistTrack(ctx context.Context, playlistID string, from, to int) error
+	// RenamePlaylist gives the playlist a new name.
+	RenamePlaylist(ctx context.Context, playlistID, name string) error
+	// DeletePlaylist removes the playlist from the server.
+	DeletePlaylist(ctx context.Context, playlistID string) error
 	Stream(ctx context.Context, t Track) (Stream, error)
 }
