@@ -155,3 +155,28 @@ func TestScopeRoundsNegativeSwingsLikePositiveOnes(t *testing.T) {
 		t.Fatalf("+1 should map to row 1 and -1 to row 7, got %d and %d", got[0], got[1])
 	}
 }
+
+// TestScopeGatesSmallSwingsOntoTheCentreLine: the dot-level flicker of a
+// quiet signal draws as a flat line, on both sides of the centre, while a
+// swing past the gate rounds normally.
+func TestScopeGatesSmallSwingsOntoTheCentreLine(t *testing.T) {
+	a := NewAnalyzer(silent{})
+	a.SetMode(ModeScope)
+	a.Update(4, 2) // centre row 4, swing 3 dots
+	dotW := a.cv.DotW()
+	a.trace = make([]float64, dotW*scopeSamplesPerDot+scopeTriggerSearch)
+	small := (scopeGate - 0.1) / 3 // just inside the gate, in sample units
+	big := (scopeGate + 0.1) / 3   // just outside it
+	vals := []float64{small, -small, big, -big}
+	a.trace[0] = -1 // the rising crossing is at index 1
+	for i := 1; i < len(a.trace); i++ {
+		a.trace[i] = vals[((i-1)/scopeSamplesPerDot)%len(vals)]
+	}
+	got := a.scopeTrace(dotW)
+	if got[0] != 4 || got[1] != 4 {
+		t.Fatalf("small swings either side should sit on the centre: %v", got[:4])
+	}
+	if got[2] != 2 || got[3] != 6 {
+		t.Fatalf("swings past the gate round normally and symmetrically: %v", got[:4])
+	}
+}
