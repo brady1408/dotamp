@@ -91,7 +91,7 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, out 
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode < 200 || resp.StatusCode > 299 { // a DELETE answers 204
 		return fmt.Errorf("plex: %s: HTTP %d", path, resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))

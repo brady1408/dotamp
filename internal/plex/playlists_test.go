@@ -253,3 +253,14 @@ func TestRenameAndDeletePlaylist(t *testing.T) {
 		t.Fatalf("delete = %s %s", r.Method, r.URL.Path)
 	}
 }
+
+func TestNoContentIsSuccess(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent) // what Plex answers a playlist DELETE with
+	}))
+	defer s.Close()
+	c := New(s.URL, "tok", "cid")
+	if err := c.DeletePlaylist(context.Background(), "901"); err != nil {
+		t.Fatalf("204 is success: %v", err)
+	}
+}
