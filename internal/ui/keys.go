@@ -34,6 +34,8 @@ const (
 	ActToPlaylist
 	ActMoveUp
 	ActMoveDown
+	ActRename
+	ActDelete
 )
 
 func ActionFor(ev *tcell.EventKey) Action {
@@ -96,6 +98,10 @@ func ActionFor(ev *tcell.EventKey) Action {
 			return ActMoveUp
 		case ']':
 			return ActMoveDown
+		case 'e':
+			return ActRename
+		case 'd':
+			return ActDelete
 		case 'j':
 			return ActDown
 		case 'k':

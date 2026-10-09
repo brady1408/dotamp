@@ -693,3 +693,120 @@ func TestFailedRefreshKeepsTheViewAndTheNotice(t *testing.T) {
 		t.Fatalf("the operation's notice must survive the refresh failure: %q", r[1])
 	}
 }
+
+type nameLib struct {
+	stubLib
+	mu    sync.Mutex
+	calls []string
+}
+
+func (l *nameLib) RenamePlaylist(_ context.Context, id, name string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.calls = append(l.calls, "rename:"+id+":"+name)
+	return nil
+}
+func (l *nameLib) DeletePlaylist(_ context.Context, id string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.calls = append(l.calls, "delete:"+id)
+	return nil
+}
+
+func playlistsApp(t *testing.T) (*App, tcell.SimulationScreen, *nameLib) {
+	t.Helper()
+	app, s, _ := newApp(t)
+	lib := &nameLib{}
+	app.lib = lib
+	app.browser = NewBrowser(lib)
+	_ = app.browser.LoadRoot(context.Background())
+	key(app, tcell.KeyTab, 0)
+	key(app, tcell.KeyDown, 0)
+	key(app, tcell.KeyDown, 0)
+	key(app, tcell.KeyEnter, 0) // Playlists: Road Trip selected
+	return app, s, lib
+}
+
+func TestRenamePlaylistFromARowPrefillsAndApplies(t *testing.T) {
+	app, s, lib := playlistsApp(t)
+	key(app, tcell.KeyRune, 'e')
+	app.Draw()
+	if r := strings.Join(rows(s), "\n"); !strings.Contains(r, "Rename:") || !strings.Contains(r, "Road Trip▏") {
+		t.Fatalf("prompt should be prefilled:\n%s", r)
+	}
+	typeKeys(app, " 2")
+	key(app, tcell.KeyEnter, 0)
+	app.Draw()
+	if len(lib.calls) != 1 || lib.calls[0] != "rename:p1:Road Trip 2" {
+		t.Fatalf("calls = %v", lib.calls)
+	}
+	if r := rows(s); !strings.Contains(r[1], "Renamed to Road Trip 2") {
+		t.Fatalf("notice = %q", r[1])
+	}
+	// blank and escape both cancel without a call
+	key(app, tcell.KeyRune, 'e')
+	for app.search.Text != "" {
+		key(app, tcell.KeyBackspace, 0)
+	}
+	key(app, tcell.KeyEnter, 0)
+	key(app, tcell.KeyRune, 'e')
+	key(app, tcell.KeyEscape, 0)
+	if len(lib.calls) != 1 || app.search.Open {
+		t.Fatalf("blank/escape must not rename: %v open=%v", lib.calls, app.search.Open)
+	}
+}
+
+func TestRenameInsideAPlaylistUpdatesTheTitle(t *testing.T) {
+	app, _, lib := playlistsApp(t)
+	key(app, tcell.KeyEnter, 0) // open Road Trip
+	key(app, tcell.KeyRune, 'e')
+	typeKeys(app, "!")
+	key(app, tcell.KeyEnter, 0)
+	if app.browser.Title() != "Road Trip!" || len(lib.calls) != 1 {
+		t.Fatalf("title=%q calls=%v", app.browser.Title(), lib.calls)
+	}
+}
+
+func TestDeletePlaylistAsksFirst(t *testing.T) {
+	app, s, lib := playlistsApp(t)
+	key(app, tcell.KeyRune, 'd')
+	app.Draw()
+	if r := rows(s); !strings.Contains(r[1], "Delete Road Trip? y/n") {
+		t.Fatalf("notice = %q", r[1])
+	}
+	key(app, tcell.KeyRune, 'n')
+	app.Draw()
+	if len(lib.calls) != 0 || !strings.Contains(rows(s)[1], "Not deleted") {
+		t.Fatalf("n must cancel: %v %q", lib.calls, rows(s)[1])
+	}
+	key(app, tcell.KeyRune, 'd')
+	key(app, tcell.KeyRune, 'y')
+	app.Draw()
+	if len(lib.calls) != 1 || lib.calls[0] != "delete:p1" || !strings.Contains(rows(s)[1], "Deleted Road Trip") {
+		t.Fatalf("y must delete: %v %q", lib.calls, rows(s)[1])
+	}
+	if app.browser.Title() != "Playlists" {
+		t.Fatalf("still on the list: %q", app.browser.Title())
+	}
+}
+
+func TestDeleteInsideAPlaylistPopsBack(t *testing.T) {
+	app, _, lib := playlistsApp(t)
+	key(app, tcell.KeyEnter, 0) // open Road Trip
+	key(app, tcell.KeyRune, 'd')
+	key(app, tcell.KeyRune, 'y')
+	if app.browser.Title() != "Playlists" || len(lib.calls) != 1 {
+		t.Fatalf("title=%q calls=%v", app.browser.Title(), lib.calls)
+	}
+}
+
+func TestRenameAndDeleteAreInertOffPlaylists(t *testing.T) {
+	app, _, lib := playlistsApp(t)
+	key(app, tcell.KeyEscape, 0) // root menu
+	key(app, tcell.KeyRune, 'e')
+	key(app, tcell.KeyRune, 'd')
+	key(app, tcell.KeyRune, 'y')
+	if len(lib.calls) != 0 || app.search.Open {
+		t.Fatalf("nothing to act on: %v", lib.calls)
+	}
+}

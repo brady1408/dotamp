@@ -634,6 +634,66 @@ func playlistView(p library.Playlist, ts []library.Track) view {
 	return view{title: p.Name, list: l, tracks: ts, playlist: &p}
 }
 
+// TargetPlaylist is the playlist a rename or delete acts on: the open
+// playlist view, else the selected playlist row.
+func (b *Browser) TargetPlaylist() (*library.Playlist, bool) {
+	if p, _, ok := b.PlaylistView(); ok {
+		return p, true
+	}
+	if r := b.List().Selected(); r != nil && r.Playlist != nil {
+		return r.Playlist, true
+	}
+	return nil, false
+}
+
+// PlaylistRenamed updates what is on screen after a rename: the open
+// view's title and header, rows that show the playlist, and the Playlists
+// list if it is open.
+func (b *Browser) PlaylistRenamed(ctx context.Context, id, name string) {
+	if v := b.top(); v != nil && v.playlist != nil && v.playlist.ID == id {
+		v.playlist.Name = name
+		v.title = name
+		if len(v.list.Rows) > 0 {
+			v.list.Rows[0].Text = fmt.Sprintf("%s — %d tracks", name, len(v.tracks))
+		}
+		return
+	}
+	b.ReloadPlaylists(ctx)
+	for i := range b.List().Rows {
+		if r := &b.List().Rows[i]; r.Playlist != nil && r.Playlist.ID == id {
+			r.Playlist.Name, r.Text = name, name
+		}
+	}
+}
+
+// PlaylistDeleted drops the playlist from the screen: pops its view if it
+// is open, reloads the Playlists list, and removes its rows elsewhere.
+func (b *Browser) PlaylistDeleted(ctx context.Context, id string) {
+	if v := b.top(); v != nil && v.playlist != nil && v.playlist.ID == id {
+		b.Back(ctx)
+		return
+	}
+	v := b.top()
+	if v == nil {
+		return
+	}
+	if v.playlists {
+		b.ReloadPlaylists(ctx)
+		return
+	}
+	rows := v.list.Rows[:0]
+	for _, r := range v.list.Rows {
+		if r.Playlist == nil || r.Playlist.ID != id {
+			rows = append(rows, r)
+		}
+	}
+	sel := v.list.Sel
+	v.list.SetRows(rows)
+	if sel < len(rows) {
+		v.list.Sel = sel
+	}
+}
+
 // PlaylistView returns the open playlist and the selected entry's position
 // (rows minus the header), or false when the open view is not a playlist.
 func (b *Browser) PlaylistView() (*library.Playlist, int, bool) {

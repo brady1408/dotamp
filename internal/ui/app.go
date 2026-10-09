@@ -25,15 +25,17 @@ type App struct {
 	lib      library.Library
 	onVolume func(float64)
 
-	an      *Analyzer
-	browser *Browser
-	queue   List
-	tab     int
-	search  SearchField
-	saver   Saver
-	saving  bool // the input field is the save prompt, not search
-	help    bool
-	tick    int
+	an       *Analyzer
+	browser  *Browser
+	queue    List
+	tab      int
+	search   SearchField
+	saver    Saver
+	saving   bool              // the input field is the save prompt, not search
+	renaming *library.Playlist // the input field is the rename prompt for this playlist
+	deleting *library.Playlist // waiting for y/n to delete this playlist
+	help     bool
+	tick     int
 
 	notice      string
 	noticeUntil time.Time
@@ -147,9 +149,38 @@ func (a *App) Handle(ev tcell.Event) bool {
 
 func (a *App) key(ev *tcell.EventKey) bool {
 	ctx := context.Background()
+	if a.deleting != nil {
+		p := a.deleting
+		a.deleting = nil
+		if ev.Key() == tcell.KeyRune && (ev.Rune() == 'y' || ev.Rune() == 'Y') {
+			if err := a.lib.DeletePlaylist(ctx, p.ID); err != nil {
+				a.setNotice("Delete failed: " + err.Error())
+			} else {
+				a.setNotice("Deleted " + p.Name)
+				a.browser.PlaylistDeleted(ctx, p.ID)
+			}
+		} else {
+			a.setNotice("Not deleted")
+		}
+		return false
+	}
 	if a.search.Open {
 		submit, cancel := a.search.Key(ev)
 		switch {
+		case a.renaming != nil && (submit || cancel):
+			p := a.renaming
+			a.renaming, a.search.Label = nil, ""
+			name := strings.TrimSpace(a.search.Text)
+			a.search.Text = ""
+			if ev.Key() == tcell.KeyEscape || name == "" || name == p.Name {
+				return false
+			}
+			if err := a.lib.RenamePlaylist(ctx, p.ID, name); err != nil {
+				a.setNotice("Rename failed: " + err.Error())
+				return false
+			}
+			a.setNotice("Renamed to " + name)
+			a.browser.PlaylistRenamed(ctx, p.ID, name)
 		case a.saving && (submit || cancel):
 			a.saving, a.search.Label = false, ""
 			name := strings.TrimSpace(a.search.Text)
@@ -280,6 +311,18 @@ func (a *App) key(ev *tcell.EventKey) bool {
 		}
 	case ActToPlaylist:
 		a.toPlaylist(ctx, list.Selected())
+	case ActRename:
+		if p, ok := a.browser.TargetPlaylist(); ok && a.tab == tabLibrary {
+			cp := *p
+			a.renaming = &cp
+			a.search.Label, a.search.Text, a.search.Open = "Rename:", p.Name, true
+		}
+	case ActDelete:
+		if p, ok := a.browser.TargetPlaylist(); ok && a.tab == tabLibrary {
+			cp := *p
+			a.deleting = &cp
+			a.setNotice(fmt.Sprintf("Delete %s? y/n", p.Name))
+		}
 	case ActEnter:
 		a.activate(ctx, list.Selected(), false)
 	case ActAppend:
