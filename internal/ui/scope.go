@@ -65,12 +65,16 @@ func (a *Analyzer) scopeTrace(dotW int) []int {
 		} else if v < -1 {
 			v = -1
 		}
-		// Deliberately lopsided rounding: the top half rounds normally, the
-		// bottom half truncates toward the centre, so the negative side
-		// sits one dot high and its smallest swings flatten onto the
-		// centre line. A real recording never sits still, and this is what
-		// makes quiet passages read as calm rather than nervous. A
-		// symmetric gate was tried and drew a ruler-straight line instead.
+		// Deliberately lopsided rounding, kept on purpose. The top half
+		// rounds normally; the bottom half truncates toward the centre, so
+		// the negative side sits one dot high and its smallest swings
+		// flatten onto the centre line. It started as a rounding bug, but
+		// it gives the trace a natural feel: music is never perfectly
+		// still, and a scope that drew every last flicker read as nervous,
+		// while a mathematically perfect gate drew a ruler-straight line
+		// that was just as distracting. This one-sided softness is what
+		// makes quiet passages look the way they sound. Do not "fix" it;
+		// TestScopeRoundingIsLopsidedOnPurpose guards it.
 		y := centre - int(v*swing+0.5)
 		if y < 0 {
 			y = 0
