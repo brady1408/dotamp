@@ -28,6 +28,8 @@ type Engine struct {
 	player   Player
 	ring     *Ring
 	tap      *Tap
+	feed     *Feed         // the output before the volume knob, for a broadcast
+	localMut atomic.Bool   // the device gets silence while a broadcast is live
 	done     chan struct{} // the audible source ended with nothing queued
 	switched chan struct{} // the audible source switched to the queued one
 
@@ -63,6 +65,7 @@ func NewEngine(out Output, rate int) *Engine {
 		rate:     rate,
 		ring:     NewRing(rate),    // rate floats = half a second of stereo
 		tap:      NewTap(rate * 2), // two seconds of history
+		feed:     NewFeed(rate * 2),
 		done:     make(chan struct{}, 1),
 		switched: make(chan struct{}, 1),
 	}
@@ -74,6 +77,15 @@ func NewEngine(out Output, rate int) *Engine {
 
 // Rate is the output sample rate the engine was opened with.
 func (e *Engine) Rate() int { return e.rate }
+
+// Feed is the output before the volume knob, for one consumer.
+func (e *Engine) Feed() *Feed { return e.feed }
+
+// SetLocalMute silences the device without touching the volume setting;
+// the feed and the visualizer tap keep flowing.
+func (e *Engine) SetLocalMute(on bool) { e.localMut.Store(on) }
+
+func (e *Engine) LocalMuted() bool { return e.localMut.Load() }
 
 func (e *Engine) Done() <-chan struct{}     { return e.done }
 func (e *Engine) Handover() <-chan struct{} { return e.switched }
@@ -517,11 +529,17 @@ func (r *reader) Read(p []byte) (int, error) {
 			r.e.handover(b, hf, c)
 		}
 	}
+	r.e.feed.Write(s) // a broadcast hears full level, whatever the local volume
 	vol := float32(r.e.Volume())
 	for i := range s {
 		s[i] *= vol
 	}
-	r.e.tap.Write(s)
+	r.e.tap.Write(s) // the visualizers follow the volume knob
+	if r.e.localMut.Load() {
+		for i := range s {
+			s[i] = 0
+		}
+	}
 	for i, v := range s {
 		if v > 1 {
 			v = 1
