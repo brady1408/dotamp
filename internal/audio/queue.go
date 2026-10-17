@@ -12,10 +12,14 @@ import (
 type Queue struct {
 	Shuffle, Repeat bool
 	tracks          []library.Track
+	tags            []tag // who asked for each track; zero for the DJ's own rows
 	idx             int   // index into tracks
 	order           []int // shuffle permutation of indices; nil when not built
 	opos            int   // position in order
 }
+
+// tag names the Discord requester of a queue row.
+type tag struct{ by, name string }
 
 func (q *Queue) Tracks() []library.Track { return q.tracks }
 
@@ -35,16 +39,64 @@ func (q *Queue) Current() (library.Track, bool) {
 
 func (q *Queue) Replace(ts []library.Track, start int) {
 	q.tracks = append([]library.Track(nil), ts...)
+	q.tags = make([]tag, len(ts))
 	q.idx = max(0, min(start, len(ts)-1))
 	q.order = nil
 }
 
 func (q *Queue) Append(ts ...library.Track) {
 	q.tracks = append(q.tracks, ts...)
+	q.tags = append(q.tags, make([]tag, len(ts))...)
 	q.order = nil
 }
 
-func (q *Queue) Clear() { q.tracks, q.idx, q.order = nil, 0, nil }
+func (q *Queue) Clear() { q.tracks, q.tags, q.idx, q.order = nil, nil, 0, nil }
+
+// InsertNext puts t right after the current track, tagged with who asked,
+// and makes it the next track even under Shuffle. It returns the index.
+func (q *Queue) InsertNext(t library.Track, by, name string) int {
+	if len(q.tracks) == 0 {
+		q.tracks, q.tags, q.idx, q.order = []library.Track{t}, []tag{{by, name}}, 0, nil
+		return 0
+	}
+	i := q.idx + 1
+	q.tracks = append(q.tracks[:i], append([]library.Track{t}, q.tracks[i:]...)...)
+	q.tags = append(q.tags[:i], append([]tag{{by, name}}, q.tags[i:]...)...)
+	q.order = nil
+	if q.Shuffle {
+		q.buildOrder()
+		rest := make([]int, 0, len(q.order))
+		for _, o := range q.order[1:] {
+			if o != i {
+				rest = append(rest, o)
+			}
+		}
+		q.order = append([]int{q.idx, i}, rest...) // current, the request, then the shuffle
+		q.opos = 0
+	}
+	return i
+}
+
+// Tag is who asked for the track at i; empty for the DJ's own rows.
+func (q *Queue) Tag(i int) (by, name string) {
+	if i < 0 || i >= len(q.tags) {
+		return "", ""
+	}
+	return q.tags[i].by, q.tags[i].name
+}
+
+// HasNext reports whether Next would move on without Repeat wrapping.
+func (q *Queue) HasNext() bool {
+	n := len(q.tracks)
+	if n == 0 {
+		return false
+	}
+	if !q.Shuffle {
+		return q.idx+1 < n
+	}
+	q.ensureOrder()
+	return q.opos+1 < n
+}
 
 // Remove drops the track at i. It reports whether that was the current
 // track and, if so, whether it was the last in the list, in which case the
@@ -57,6 +109,7 @@ func (q *Queue) Remove(i int) (wasCurrent, wasLast bool) {
 	wasCurrent = i == q.idx
 	wasLast = i == len(q.tracks)-1
 	q.tracks = append(q.tracks[:i], q.tracks[i+1:]...)
+	q.tags = append(q.tags[:i], q.tags[i+1:]...)
 	q.order = nil
 	if i < q.idx || (wasCurrent && wasLast) {
 		q.idx--

@@ -19,8 +19,9 @@ type Controller struct {
 	eng    *Engine
 	notify func(string)
 
-	qmu sync.Mutex // guards q; the ui goroutine and Run both touch it
+	qmu sync.Mutex // guards q and mix; the ui goroutine and Run both touch them
 	q   Queue
+	mix mixer
 
 	mu        sync.Mutex // guards current, has, nextID, nextTrack, retried
 	current   library.Track
@@ -28,10 +29,100 @@ type Controller struct {
 	nextID    string        // track whose source is queued in the engine, "" if none
 	nextTrack library.Track // that track, for the handover
 	retried   string        // track ID whose stream was already reopened once
+	curBy     string        // who asked for the current track; "" for the DJ
+	curName   string
+	onEnd     func(t library.Track, played time.Duration, by, name string)
 }
 
 func NewController(lib library.Library, eng *Engine, notify func(string)) *Controller {
-	return &Controller{lib: lib, eng: eng, notify: notify}
+	c := &Controller{lib: lib, eng: eng, notify: notify}
+	c.mix.fedPos = -1
+	return c
+}
+
+// SetMaxPending caps the songs one requester may have waiting; 0 = unlimited.
+func (c *Controller) SetMaxPending(n int) { c.withQ(func(*Queue) { c.mix.max = n }) }
+
+// SetTrackEnd is told every track that stops being current: how much of
+// it was heard and who asked for it.
+func (c *Controller) SetTrackEnd(fn func(t library.Track, played time.Duration, by, name string)) {
+	c.mu.Lock()
+	c.onEnd = fn
+	c.mu.Unlock()
+}
+
+// Request queues songs for someone in the room. With nothing playing it
+// starts the first one at once.
+func (c *Controller) Request(ctx context.Context, by, name string, ts []library.Track) (int, error) {
+	var pending int
+	var refused, startNow bool
+	c.withQ(func(q *Queue) {
+		pending = c.mix.waiting(by)
+		if c.mix.max > 0 && pending+len(ts) > c.mix.max {
+			refused = true
+			return
+		}
+		l := c.mix.lane(by, name)
+		l.Tracks = append(l.Tracks, ts...)
+		pending = c.mix.waiting(by)
+		c.mu.Lock()
+		playing := c.has
+		c.mu.Unlock()
+		if c.mix.feed(q) && !playing {
+			startNow = true
+		}
+	})
+	if refused {
+		return pending, ErrTooManyPending
+	}
+	if startNow {
+		return pending, c.start(ctx)
+	}
+	return pending, nil
+}
+
+// Pending is every lane with its waiting songs, in rotation order.
+func (c *Controller) Pending() (ls []Lane) {
+	c.withQ(func(*Queue) {
+		for _, l := range c.mix.lanes {
+			ls = append(ls, Lane{By: l.By, Name: l.Name, Tracks: append([]library.Track(nil), l.Tracks...)})
+		}
+	})
+	return
+}
+
+// RequesterOf is who asked for queue row i; empty for the DJ's own rows.
+func (c *Controller) RequesterOf(i int) (by, name string) {
+	c.withQ(func(q *Queue) { by, name = q.Tag(i) })
+	return
+}
+
+// ClearRequests drops every lane; it returns the songs dropped.
+func (c *Controller) ClearRequests() (n int) {
+	c.withQ(func(*Queue) { n = c.mix.clear() })
+	return
+}
+
+// ended tells the track-end hook what just finished and who asked for it.
+func (c *Controller) ended(played time.Duration) {
+	c.mu.Lock()
+	t, has, fn, by, name := c.current, c.has, c.onEnd, c.curBy, c.curName
+	c.mu.Unlock()
+	if has && fn != nil {
+		fn(t, played, by, name)
+	}
+}
+
+// began records who asked for the track at the cursor and feeds the next
+// request ahead of it.
+func (c *Controller) began() {
+	c.withQ(func(q *Queue) {
+		by, name := q.Tag(q.idx)
+		c.mu.Lock()
+		c.curBy, c.curName = by, name
+		c.mu.Unlock()
+		c.mix.feed(q)
+	})
 }
 
 func (c *Controller) Current() (library.Track, bool) {
@@ -82,6 +173,7 @@ func (c *Controller) open(ctx context.Context, t library.Track) (Source, error) 
 }
 
 func (c *Controller) stopped() {
+	c.ended(c.eng.Position())
 	c.eng.Stop()
 	c.mu.Lock()
 	c.has = false
@@ -92,6 +184,7 @@ func (c *Controller) stopped() {
 // forward. It gives up after one pass over the queue, so Repeat cannot turn
 // a dead server into an endless loop.
 func (c *Controller) start(ctx context.Context) error {
+	c.ended(c.eng.Position())
 	var tries, size int
 	c.withQ(func(q *Queue) { size = len(q.Tracks()) })
 	for {
@@ -117,6 +210,7 @@ func (c *Controller) start(ctx context.Context) error {
 			c.current, c.has, c.retried = t, true, ""
 			c.mu.Unlock()
 			c.eng.Play(src)
+			c.began()
 			return nil
 		}
 		log.Printf("skip %s (%s): %v", t.Title, t.ID, err)
@@ -147,17 +241,25 @@ func (c *Controller) takePrefetched(id string) Source {
 }
 
 func (c *Controller) PlayTracks(ctx context.Context, ts []library.Track, start int) error {
-	c.withQ(func(q *Queue) { q.Replace(ts, start) })
+	c.withQ(func(q *Queue) {
+		q.Replace(ts, start)
+		c.mix.fedPos, c.mix.fedBy = -1, "" // the fed row went with the old list; lanes stay
+	})
 	return c.start(ctx)
 }
 
 func (c *Controller) Enqueue(ts ...library.Track) { c.withQ(func(q *Queue) { q.Append(ts...) }) }
 
-// Clear empties the queue and stops playback.
-func (c *Controller) Clear() {
-	c.withQ(func(q *Queue) { q.Clear() })
+// Clear empties the queue and every request lane and stops playback. It
+// returns how many requested songs were dropped.
+func (c *Controller) Clear() (requests int) {
+	c.withQ(func(q *Queue) {
+		requests = c.mix.clear()
+		q.Clear()
+	})
 	c.discardPrefetch()
 	c.stopped()
+	return requests
 }
 
 // Remove drops the track at i from the queue. Removing the playing track
@@ -171,6 +273,7 @@ func (c *Controller) Remove(ctx context.Context, i int) error {
 		if i >= 0 && i < len(q.Tracks()) {
 			removed, ok = q.Tracks()[i], true
 			wasCurrent, wasLast = q.Remove(i)
+			c.mix.removed(i)
 		}
 	})
 	if !ok {
@@ -201,7 +304,7 @@ func (c *Controller) discardPrefetch() {
 
 func (c *Controller) Next(ctx context.Context) error {
 	if !c.queueNext() {
-		c.eng.Stop()
+		c.stopped()
 		return nil
 	}
 	return c.start(ctx)
@@ -294,6 +397,10 @@ func (c *Controller) recover(ctx context.Context, cause error) bool {
 // queue cursor follows, and the deck shows the new track.
 func (c *Controller) onHandover() {
 	c.mu.Lock()
+	left := c.current
+	c.mu.Unlock()
+	c.ended(left.Duration) // a handover means the track played out
+	c.mu.Lock()
 	t := c.nextTrack
 	c.current, c.has, c.retried, c.nextID = t, true, "", ""
 	c.mu.Unlock()
@@ -309,6 +416,7 @@ func (c *Controller) onHandover() {
 			}
 		}
 	})
+	c.began()
 }
 
 // maybePrefetch opens the next track's stream shortly before the current one

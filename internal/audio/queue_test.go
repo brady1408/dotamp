@@ -75,3 +75,75 @@ func TestQueueShuffleVisitsEveryTrackOnce(t *testing.T) {
 		}
 	}
 }
+
+func named(ids ...string) []library.Track {
+	out := make([]library.Track, len(ids))
+	for i, id := range ids {
+		out[i] = library.Track{ID: id, Title: id}
+	}
+	return out
+}
+
+func ids(ts []library.Track) []string {
+	out := make([]string, len(ts))
+	for i, t := range ts {
+		out[i] = t.ID
+	}
+	return out
+}
+
+func TestInsertNextGoesRightAfterTheCursorEvenWhenShuffled(t *testing.T) {
+	var q Queue
+	q.Replace(named("a", "b", "c", "d"), 1)
+	q.Shuffle = true
+	i := q.InsertNext(library.Track{ID: "r"}, "u1", "Alice")
+	if i != 2 || q.Tracks()[2].ID != "r" {
+		t.Fatalf("inserted at %d: %v", i, ids(q.Tracks()))
+	}
+	if by, name := q.Tag(2); by != "u1" || name != "Alice" {
+		t.Fatalf("tag = %q %q", by, name)
+	}
+	if !q.Next() || q.Tracks()[q.Index()].ID != "r" {
+		t.Fatalf("shuffle did not play the request next: idx %d", q.Index())
+	}
+}
+
+func TestInsertNextOnAnEmptyQueueBecomesCurrent(t *testing.T) {
+	var q Queue
+	q.InsertNext(library.Track{ID: "r"}, "u1", "Alice")
+	cur, ok := q.Current()
+	if !ok || cur.ID != "r" || q.Index() != 0 {
+		t.Fatalf("current = %v %v idx %d", cur, ok, q.Index())
+	}
+}
+
+func TestTagsFollowRemoveAndReplace(t *testing.T) {
+	var q Queue
+	q.Replace(named("a", "b"), 0)
+	q.InsertNext(library.Track{ID: "r"}, "u1", "Alice")
+	q.Remove(0)
+	if _, name := q.Tag(0); name != "Alice" {
+		t.Fatalf("tag after remove = %q", name)
+	}
+	q.Append(library.Track{ID: "c"})
+	if _, name := q.Tag(2); name != "" {
+		t.Fatalf("appended row tagged %q", name)
+	}
+	q.Replace(named("x"), 0)
+	if _, name := q.Tag(0); name != "" {
+		t.Fatalf("replace kept a tag %q", name)
+	}
+}
+
+func TestHasNextIgnoresRepeat(t *testing.T) {
+	var q Queue
+	q.Replace(named("a", "b"), 1)
+	q.Repeat = true
+	if q.HasNext() {
+		t.Fatal("HasNext true at the end with Repeat")
+	}
+	q.Jump(0)
+	if !q.HasNext() {
+		t.Fatal("HasNext false with a track after the cursor")
+	}
+}
