@@ -292,3 +292,25 @@ func TestFedRowBehindTheCursorIsMovedAhead(t *testing.T) {
 		t.Fatalf("tag did not travel: %q", name)
 	}
 }
+
+func TestEnqueueAndPlayStartsWhenIdleAndOnlyAppendsOtherwise(t *testing.T) {
+	c, _ := newTestController(t)
+	if err := c.EnqueueAndPlay(ctx, named("a", "b")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { cur, ok := c.Current(); return ok && cur.ID == "a" })
+	if err := c.EnqueueAndPlay(ctx, named("c")); err != nil {
+		t.Fatal(err)
+	}
+	if cur, _ := c.Current(); cur.ID != "a" {
+		t.Fatalf("appending while playing changed the current track to %s", cur.ID)
+	}
+	if got := strings.Join(ids(c.Tracks()), " "); got != "a b c" {
+		t.Fatalf("queue = %q", got)
+	}
+	_ = c.Clear()
+	if err := c.EnqueueAndPlay(ctx, named("d")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { cur, ok := c.Current(); return ok && cur.ID == "d" })
+}

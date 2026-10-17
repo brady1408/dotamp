@@ -260,6 +260,30 @@ func (c *Controller) PlayTracks(ctx context.Context, ts []library.Track, start i
 
 func (c *Controller) Enqueue(ts ...library.Track) { c.withQ(func(q *Queue) { q.Append(ts...) }) }
 
+// EnqueueAndPlay appends ts and, when nothing is playing, starts the first
+// of them: what someone typing /play into a silent room expects.
+func (c *Controller) EnqueueAndPlay(ctx context.Context, ts []library.Track) error {
+	if len(ts) == 0 {
+		return nil
+	}
+	var first int
+	var idle bool
+	c.withQ(func(q *Queue) {
+		first = len(q.Tracks())
+		q.Append(ts...)
+		c.mu.Lock()
+		idle = !c.has
+		c.mu.Unlock()
+		if idle {
+			q.Jump(first)
+		}
+	})
+	if !idle {
+		return nil
+	}
+	return c.start(context.WithoutCancel(ctx))
+}
+
 // Clear empties the queue and every request lane and stops playback. It
 // returns how many requested songs were dropped.
 func (c *Controller) Clear() (requests int) {

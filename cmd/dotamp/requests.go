@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/brady1408/dotamp/internal/audio"
@@ -19,7 +20,11 @@ type player struct {
 func (p player) Request(ctx context.Context, by, name string, ts []library.Track) (int, error) {
 	return p.ctrl.Request(ctx, by, name, ts)
 }
-func (p player) Enqueue(ts []library.Track) { p.ctrl.Enqueue(ts...) }
+func (p player) Enqueue(ts []library.Track) {
+	if err := p.ctrl.EnqueueAndPlay(context.Background(), ts); err != nil {
+		log.Printf("dj /play: %v", err)
+	}
+}
 func (p player) Current() (library.Track, time.Duration, string, bool) {
 	t, ok := p.ctrl.Current()
 	_, name := p.ctrl.RequesterOf(p.ctrl.Index())
