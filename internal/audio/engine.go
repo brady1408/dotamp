@@ -153,6 +153,25 @@ func (e *Engine) SetNext(src Source) {
 	}
 }
 
+// DropNext discards the queued next source, but only while the decoder has
+// not read from it; once it has, the ring already holds its start and the
+// source must play. It reports whether nothing is queued afterwards. Unlike
+// TakeNext it never halts the decoder, so the current track plays on.
+func (e *Engine) DropNext() bool {
+	e.mu.Lock()
+	next, started := e.next, e.nextStarted
+	if next != nil && started {
+		e.mu.Unlock()
+		return false
+	}
+	e.next, e.nextStarted = nil, false
+	e.mu.Unlock()
+	if next != nil {
+		next.Close()
+	}
+	return true
+}
+
 // PeekNext reports the source queued to play next, if any.
 func (e *Engine) PeekNext() Source {
 	e.mu.Lock()

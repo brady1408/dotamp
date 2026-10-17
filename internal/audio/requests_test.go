@@ -242,3 +242,53 @@ func TestTrackEndIsReportedOnceWhenTheNextTrackFails(t *testing.T) {
 		t.Fatalf("ends = %v", got)
 	}
 }
+
+// decoderRunning reports whether the engine's decode goroutine is alive.
+func decoderRunning(e *Engine) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stop != nil
+}
+
+func TestRequestDropsThePrefetchWithoutStoppingTheDecoder(t *testing.T) {
+	c, _ := newTestController(t)
+	c.Enqueue(named("dj1", "dj2")...)
+	_ = c.Jump(ctx, 0)
+	waitFor(t, func() bool { return c.eng.Length() > 0 })
+	c.maybePrefetch(ctx)
+	c.Request(ctx, "a", "Alice", named("a1"))
+	if !decoderRunning(c.eng) {
+		t.Fatal("the decoder was halted mid-track")
+	}
+}
+
+func TestRemovingThePrefetchedNextKeepsPlaying(t *testing.T) {
+	c, _ := newTestController(t)
+	c.Enqueue(named("a", "b")...)
+	_ = c.Jump(ctx, 0)
+	waitFor(t, func() bool { return c.eng.Length() > 0 })
+	c.maybePrefetch(ctx)
+	if err := c.Remove(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if c.eng.PeekNext() != nil {
+		t.Fatal("prefetched b survived its removal")
+	}
+	if !decoderRunning(c.eng) {
+		t.Fatal("the decoder was halted mid-track")
+	}
+}
+
+func TestFedRowBehindTheCursorIsMovedAhead(t *testing.T) {
+	c, _ := newTestController(t)
+	c.Enqueue(named("dj1", "dj2", "dj3")...)
+	_ = c.Jump(ctx, 0)
+	c.Request(ctx, "a", "Alice", named("a1")) // [dj1 a1 dj2 dj3]
+	_ = c.Jump(ctx, 2)                        // a handover that skipped the request lands on dj2
+	if got := strings.Join(ids(c.Tracks()), " "); got != "dj1 dj2 a1 dj3" {
+		t.Fatalf("queue = %q", got)
+	}
+	if _, name := c.RequesterOf(2); name != "Alice" {
+		t.Fatalf("tag did not travel: %q", name)
+	}
+}

@@ -81,7 +81,7 @@ func (c *Controller) Request(ctx context.Context, by, name string, ts []library.
 		return pending, ErrTooManyPending
 	}
 	if fed {
-		c.discardPrefetch() // the DJ's next may already be queued in the engine
+		c.dropPrefetch() // the DJ's next may already be queued in the engine
 	}
 	if startNow {
 		// The request outlives the slash command that carried it.
@@ -292,8 +292,8 @@ func (c *Controller) Remove(ctx context.Context, i int) error {
 	c.mu.Lock()
 	prefetched := c.nextID == removed.ID
 	c.mu.Unlock()
-	if prefetched {
-		c.discardPrefetch()
+	if prefetched && (wasCurrent || !c.dropPrefetch()) {
+		c.discardPrefetch() // about to restart anyway, or the decoder is already into it
 	}
 	switch {
 	case wasCurrent && wasLast:
@@ -303,6 +303,19 @@ func (c *Controller) Remove(ctx context.Context, i int) error {
 		return c.start(ctx)
 	}
 	return nil
+}
+
+// dropPrefetch forgets a prefetched next track without disturbing the
+// playing one. It fails, leaving the prefetch in place, once the decoder
+// has already started on it.
+func (c *Controller) dropPrefetch() bool {
+	if !c.eng.DropNext() {
+		return false
+	}
+	c.mu.Lock()
+	c.nextID, c.nextTrack = "", library.Track{}
+	c.mu.Unlock()
+	return true
 }
 
 // discardPrefetch closes whatever source is queued in the engine.

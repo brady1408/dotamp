@@ -62,6 +62,7 @@ func (m *mixer) songs() int {
 // feed inserts the next lane's song after the cursor unless a request is
 // already fed ahead. It reports whether it inserted.
 func (m *mixer) feed(q *Queue) bool {
+	m.rescue(q)
 	if m.fedPos > q.idx || m.songs() == 0 {
 		return false
 	}
@@ -93,6 +94,18 @@ func (m *mixer) feed(q *Queue) bool {
 		return true
 	}
 	return false
+}
+
+// rescue moves a fed request that a handover jumped past back to right
+// after the cursor, so it plays next instead of being orphaned behind it.
+func (m *mixer) rescue(q *Queue) {
+	if m.fedPos < 0 || m.fedPos >= q.idx {
+		return
+	}
+	t := q.tracks[m.fedPos]
+	by, name := q.Tag(m.fedPos)
+	q.Remove(m.fedPos) // the cursor moves down one with it
+	m.fedPos = q.InsertNext(t, by, name)
 }
 
 // removed keeps fedPos in step with a queue removal.

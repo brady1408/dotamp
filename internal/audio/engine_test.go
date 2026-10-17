@@ -203,3 +203,22 @@ func TestEngineSpectrumUsesTap(t *testing.T) {
 		t.Fatalf("tap peak = %f", peak)
 	}
 }
+
+func TestDropNextOnlyBeforeTheDecoderReachesIt(t *testing.T) {
+	e := NewEngine(&fakeOutput{}, OutRate)
+	t.Cleanup(e.Close)
+	e.SetNext(&fakeSource{rate: OutRate, frames: OutRate})
+	if !e.DropNext() || e.PeekNext() != nil {
+		t.Fatal("an unread next source should drop")
+	}
+	if !e.DropNext() {
+		t.Fatal("nothing queued counts as dropped")
+	}
+	e.SetNext(&fakeSource{rate: OutRate, frames: OutRate})
+	e.mu.Lock()
+	e.nextStarted = true // the decoder has read from it
+	e.mu.Unlock()
+	if e.DropNext() || e.PeekNext() == nil {
+		t.Fatal("a source the decoder is into must stay")
+	}
+}

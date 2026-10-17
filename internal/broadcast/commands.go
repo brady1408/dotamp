@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -256,7 +257,9 @@ func (b *Broadcaster) play(ctx context.Context, c command) reply {
 	}
 	var n int
 	var err error
-	if c.UserID == b.cfg.UserID.String() { // the DJ: straight onto the queue, no lane
+	// The DJ's own /play goes straight onto the queue, no lane. DOTAMP_DJ_REQUESTS
+	// sends it through a lane instead, for testing the lanes with one account.
+	if c.UserID == b.cfg.UserID.String() && os.Getenv("DOTAMP_DJ_REQUESTS") == "" {
 		b.cfg.Player.Enqueue(ts)
 	} else {
 		n, err = b.cfg.Player.Request(ctx, c.UserID, c.UserName, ts)
