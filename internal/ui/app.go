@@ -31,6 +31,7 @@ type App struct {
 	tab      int
 	search   SearchField
 	saver    Saver
+	cast     Broadcaster       // nil until Discord is configured
 	saving   bool              // the input field is the save prompt, not search
 	renaming *library.Playlist // the input field is the rename prompt for this playlist
 	deleting *library.Playlist // waiting for y/n to delete this playlist
@@ -76,6 +77,15 @@ type Saver interface {
 
 // SetAfterglow turns the oscilloscope's phosphor-style ghost on or off.
 func (a *App) SetAfterglow(on bool) { a.an.Afterglow = on }
+
+// Broadcaster streams the player into a Discord voice channel.
+type Broadcaster interface {
+	Toggle(ctx context.Context) error
+	Channel() string
+}
+
+// SetBroadcaster enables b; nil leaves b explaining how to set Discord up.
+func (a *App) SetBroadcaster(b Broadcaster) { a.cast = b }
 
 // SetSaver enables w, saving the queue as a playlist.
 func (a *App) SetSaver(s Saver) { a.saver = s }

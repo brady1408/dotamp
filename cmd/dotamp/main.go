@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -15,9 +16,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/disgoorg/snowflake/v2"
 	"github.com/gdamore/tcell/v2"
 
 	"github.com/brady1408/dotamp/internal/audio"
+	"github.com/brady1408/dotamp/internal/broadcast"
 	"github.com/brady1408/dotamp/internal/config"
 	"github.com/brady1408/dotamp/internal/mediakeys"
 	"github.com/brady1408/dotamp/internal/multi"
@@ -52,10 +55,12 @@ func main() {
 		err = listServers()
 	case "navidrome":
 		err = addNavidrome(flag.Arg(1), flag.Arg(2))
+	case "discord":
+		err = addDiscord(flag.Arg(1))
 	case "":
 		err = mediakeys.RunMain(func() error { return run(*debugLog, *silent) })
 	default:
-		err = fmt.Errorf("unknown command %q (try: dotamp login, dotamp servers, dotamp navidrome URL USER)", flag.Arg(0))
+		err = fmt.Errorf("unknown command %q (try: dotamp login, dotamp servers, dotamp navidrome URL USER, dotamp discord USER_ID)", flag.Arg(0))
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "dotamp:", err)
@@ -291,6 +296,38 @@ func addNavidrome(serverURL, user string) error {
 		return err
 	}
 	fmt.Printf("Connected to %s (%s). Saved as the Navidrome library.\n", serverURL, version)
+	return nil
+}
+
+// addDiscord records which Discord account the broadcast follows and checks
+// the bot token file is in place and accepted.
+func addDiscord(userID string) error {
+	if _, err := snowflake.Parse(userID); err != nil || userID == "" {
+		return errors.New("usage: dotamp discord USER_ID  (your Discord user ID: Settings → Advanced → Developer Mode, then right-click your name → Copy User ID)")
+	}
+	cfg, err := loadOrEmpty()
+	if err != nil {
+		return err
+	}
+	if cfg.Discord == nil {
+		cfg.Discord = &config.Discord{}
+	}
+	cfg.Discord.UserID = userID
+	tok, err := os.ReadFile(cfg.DiscordTokenPath())
+	if err != nil {
+		return fmt.Errorf("Discord token file missing: %s (put the bot token there, one line)", cfg.DiscordTokenPath())
+	}
+	if os.Getenv("DOTAMP_DISCORD_NOCHECK") == "" {
+		name, guilds, err := broadcast.Check(context.Background(), strings.TrimSpace(string(tok)))
+		if err != nil {
+			return fmt.Errorf("Discord login failed: %w", err)
+		}
+		fmt.Printf("Bot %s is in: %s\n", name, strings.Join(guilds, ", "))
+	}
+	if err := config.Save(cfg); err != nil {
+		return err
+	}
+	fmt.Println("Saved. Join a voice channel and press b in dotamp.")
 	return nil
 }
 
@@ -638,6 +675,20 @@ func run(debugLog, silent bool) (err error) {
 	})
 	app.SetSwitcher(lib)
 	app.SetSaver(lib)
+	if cfg.Discord != nil {
+		if tok, err := os.ReadFile(cfg.DiscordTokenPath()); err == nil {
+			uid, _ := snowflake.Parse(cfg.Discord.UserID)
+			bc := broadcast.New(broadcast.Config{
+				Token: strings.TrimSpace(string(tok)), UserID: uid, Rate: rate, Feed: eng.Feed(),
+				Mute: eng.SetLocalMute, Notify: func(m string) { app.Notify(m) },
+				Logger: slog.New(slog.NewTextHandler(logf, &slog.HandlerOptions{Level: slog.LevelWarn})),
+			})
+			defer bc.Close(context.Background())
+			app.SetBroadcaster(bc)
+		} else {
+			log.Printf("discord: %v", err)
+		}
+	}
 	app.SetVisual(cfg.Visual)
 	app.SetAfterglow(cfg.ScopeAfterglow)
 	app.OnVisual = func(name string) {

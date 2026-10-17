@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 type Config struct {
@@ -29,6 +30,27 @@ type Config struct {
 	OutputRate     int        `json:"output_rate,omitempty"`        // device sample rate; 44100 when unset. Match your DAC to avoid a second conversion.
 	NoMediaKeys    bool       `json:"disable_media_keys,omitempty"` // leave the keyboard's media keys to other programs
 	ScopeAfterglow bool       `json:"scope_afterglow,omitempty"`    // the oscilloscope keeps last frame's trace dim under the live one
+	Discord        *Discord   `json:"discord,omitempty"`
+}
+
+// Discord is the bot that broadcasts the player into a voice channel.
+type Discord struct {
+	UserID    string `json:"user_id"`              // the account the bot follows into voice
+	TokenFile string `json:"token_file,omitempty"` // bot token, one line; default <config dir>/discord-token
+}
+
+// DiscordTokenPath is where the bot token is read from.
+func (c Config) DiscordTokenPath() string {
+	if c.Discord != nil && c.Discord.TokenFile != "" {
+		p := c.Discord.TokenFile
+		if strings.HasPrefix(p, "~/") {
+			if home, err := os.UserHomeDir(); err == nil {
+				p = filepath.Join(home, p[2:])
+			}
+		}
+		return p
+	}
+	return filepath.Join(filepath.Dir(Path()), "discord-token")
 }
 
 // Navidrome is an optional second library on a Subsonic-compatible server.

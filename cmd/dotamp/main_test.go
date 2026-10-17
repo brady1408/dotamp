@@ -263,3 +263,34 @@ func TestFallsBackToAServerThatHasMusic(t *testing.T) {
 		t.Fatalf("with only video servers left the error names them: %v", err)
 	}
 }
+
+func TestDiscordCommandSavesUserAndChecksTheTokenFile(t *testing.T) {
+	bin := build(t)
+	home := t.TempDir()
+	cmd := exec.Command(bin, "discord", "123456789012345678")
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+home)
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "token file missing") {
+		t.Fatalf("without a token file the command must say so: %v\n%s", err, out)
+	}
+	_ = os.MkdirAll(filepath.Join(home, "dotamp"), 0o755)
+	_ = os.WriteFile(filepath.Join(home, "dotamp", "discord-token"), []byte("not-a-real-token\n"), 0o600)
+	cmd = exec.Command(bin, "discord", "123456789012345678")
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+home, "DOTAMP_DISCORD_NOCHECK=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	b, _ := os.ReadFile(filepath.Join(home, "dotamp", "config.json"))
+	var cfg map[string]any
+	_ = json.Unmarshal(b, &cfg)
+	d, _ := cfg["discord"].(map[string]any)
+	if d == nil || d["user_id"] != "123456789012345678" {
+		t.Fatalf("config = %s", b)
+	}
+	if strings.Contains(string(b), "not-a-real-token") {
+		t.Fatal("the token must never be written to config.json")
+	}
+	if out, err := exec.Command(bin, "discord", "notanumber").CombinedOutput(); err == nil || !strings.Contains(string(out), "usage") {
+		t.Fatalf("a bad id must show usage: %v\n%s", err, out)
+	}
+}
