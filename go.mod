@@ -1,8 +1,9 @@
 module github.com/brady1408/dotamp
 
-go 1.26.0
+go 1.27.0
 
 require (
+	github.com/disgoorg/snowflake/v2 v2.0.3
 	github.com/ebitengine/oto/v3 v3.5.1
 	github.com/ebitengine/purego v0.11.1
 	github.com/gdamore/tcell/v2 v2.13.10
@@ -10,6 +11,7 @@ require (
 	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/mewkiz/flac v1.0.14
 	github.com/rivo/uniseg v0.4.7
+	github.com/thesyncim/gopus v0.2.2
 	golang.org/x/term v0.46.0
 )
 
@@ -21,5 +23,5 @@ require (
 	github.com/mewkiz/pkg v0.0.0-20250417130911-3f050ff8c56d // indirect
 	github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985 // indirect
 	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 )
