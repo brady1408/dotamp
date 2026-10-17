@@ -54,27 +54,35 @@ func TestPipelineMakesFiftyStereoPacketsPerSecond(t *testing.T) {
 	}
 }
 
-func TestSpeakerGoesQuietAfterThreeEmptyTicksAndAnnouncesReturn(t *testing.T) {
+func TestSpeakerSendsFiveSilenceFramesThenNothing(t *testing.T) {
 	var s Speaker
 	for i := 0; i < 3; i++ {
-		if send, speaking, changed := s.Tick(true); send != SendAudio || !speaking || (i == 0) != changed {
-			t.Fatalf("tick %d: %v %v %v", i, send, speaking, changed)
+		if send := s.Tick(true); send != SendAudio {
+			t.Fatalf("tick %d: %v", i, send)
 		}
 	}
-	for i := 0; i < 3; i++ { // grace: still "audio" state but nothing to send
-		if send, _, _ := s.Tick(false); send != SendNothing {
+	for i := 0; i < 3; i++ { // grace
+		if send := s.Tick(false); send != SendNothing {
 			t.Fatalf("grace tick %d: %v", i, send)
 		}
 	}
-	for i := 0; i < 5; i++ { // then five silence frames
-		if send, speaking, _ := s.Tick(false); send != SendSilence || !speaking {
-			t.Fatalf("silence tick %d: %v %v", i, send, speaking)
+	for i := 0; i < 5; i++ {
+		if send := s.Tick(false); send != SendSilence {
+			t.Fatalf("silence tick %d: %v", i, send)
 		}
 	}
-	if send, speaking, changed := s.Tick(false); send != SendNothing || speaking || !changed {
-		t.Fatalf("speaking should drop after the silence frames: %v %v %v", send, speaking, changed)
+	for i := 0; i < 3; i++ {
+		if send := s.Tick(false); send != SendNothing {
+			t.Fatalf("after the silence run nothing is sent: %v", send)
+		}
 	}
-	if send, speaking, changed := s.Tick(true); send != SendAudio || !speaking || !changed {
-		t.Fatalf("audio returning raises the flag first: %v %v %v", send, speaking, changed)
+	if send := s.Tick(true); send != SendAudio {
+		t.Fatalf("audio resumes at once: %v", send)
+	}
+	s.Tick(false)
+	s.Tick(false)
+	s.Tick(false)
+	if send := s.Tick(false); send != SendSilence {
+		t.Fatal("a new quiet spell gets a fresh silence run")
 	}
 }

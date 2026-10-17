@@ -152,6 +152,7 @@ func (b *Broadcaster) join(ctx context.Context, loc Location) error {
 	conn := b.client.VoiceManager.CreateConn(loc.Guild)
 	if err := conn.Open(ctx, loc.Channel, false, true); err != nil {
 		b.client.VoiceManager.RemoveConn(loc.Guild)
+		b.cfg.Logger.Warn("broadcast join", "channel", loc.Channel, "err", err)
 		return fmt.Errorf("Broadcast failed: %w", err)
 	}
 	if err := conn.SetSpeaking(ctx, voice.SpeakingFlagMicrophone); err != nil {
@@ -216,8 +217,13 @@ func (b *Broadcaster) stream(conn voice.Conn, stop chan struct{}) {
 		b.cfg.Notify("Broadcast failed: " + err.Error())
 		return
 	}
+	// The feed holds the last two seconds whether or not anyone listens;
+	// start live, not with a backlog that would play out as a rush.
+	slice := b.cfg.Rate / 50 // frames per 20 ms
+	chunk := make([]float32, 2*slice*2)
+	for b.cfg.Feed.Read(chunk) > 0 {
+	}
 	var sp Speaker
-	chunk := make([]float32, 2*(b.cfg.Rate/25)) // up to 40 ms of source per tick, to catch up
 	tick := time.NewTicker(20 * time.Millisecond)
 	defer tick.Stop()
 	ctx := context.Background()
@@ -228,20 +234,18 @@ func (b *Broadcaster) stream(conn voice.Conn, stop chan struct{}) {
 			return
 		case <-tick.C:
 		}
-		if n := b.cfg.Feed.Read(chunk); n > 0 {
+		// One slice per tick; two when a lag of over 200 ms has built up,
+		// so the stream creeps back to live instead of jumping.
+		want := slice
+		if b.cfg.Feed.Available() > slice*10 {
+			want = 2 * slice
+		}
+		if n := b.cfg.Feed.Read(chunk[:2*want]); n > 0 {
 			pipe.Push(chunk[:2*n])
 		}
 		pending = append(pending, pipe.Packets()...)
-		send, speaking, changed := sp.Tick(len(pending) > 0)
-		if changed {
-			flag := voice.SpeakingFlagNone
-			if speaking {
-				flag = voice.SpeakingFlagMicrophone
-			}
-			_ = conn.SetSpeaking(ctx, flag)
-		}
 		var pkt []byte
-		switch send {
+		switch sp.Tick(len(pending) > 0) {
 		case SendAudio:
 			pkt, pending = pending[0], pending[1:]
 		case SendSilence:
@@ -255,13 +259,15 @@ func (b *Broadcaster) stream(conn voice.Conn, stop chan struct{}) {
 			go b.leave(ctx)
 			return
 		}
-		if len(pending) > 25 { // half a second behind: drop to stay live
-			pending = pending[len(pending)-25:]
+		if len(pending) > 5 { // a tenth of a second behind: drop to stay live
+			pending = pending[len(pending)-5:]
 		}
 	}
 }
 
 // onVoiceState follows the user between channels and leaves when they do.
+// The work runs on its own goroutine: a join waits for voice events that
+// disgo delivers on the goroutine this handler is called from.
 func (b *Broadcaster) onVoiceState(e *events.GuildVoiceStateUpdate) {
 	if e.VoiceState.UserID != b.cfg.UserID {
 		return
@@ -273,17 +279,23 @@ func (b *Broadcaster) onVoiceState(e *events.GuildVoiceStateUpdate) {
 	if !live {
 		return
 	}
-	ctx := context.Background()
-	switch {
-	case e.VoiceState.ChannelID == nil:
-		b.leave(ctx)
-		b.cfg.Notify("You left " + name + "; broadcast ended")
-	case *e.VoiceState.ChannelID != loc.Channel:
-		b.leave(ctx)
-		if err := b.join(ctx, Location{e.VoiceState.GuildID, *e.VoiceState.ChannelID}); err != nil {
-			b.cfg.Notify(err.Error())
+	channel := e.VoiceState.ChannelID
+	guild := e.VoiceState.GuildID
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		switch {
+		case channel == nil:
+			b.leave(ctx)
+			b.cfg.Notify("You left " + name + "; broadcast ended")
+		case *channel != loc.Channel:
+			b.leave(ctx)
+			if err := b.join(ctx, Location{guild, *channel}); err != nil {
+				b.cfg.Logger.Warn("broadcast follow", "err", err)
+				b.cfg.Notify(err.Error())
+			}
 		}
-	}
+	}()
 }
 
 // Close leaves voice and the gateway; used on quit.

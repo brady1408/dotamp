@@ -69,37 +69,28 @@ const (
 	silenceFrames = 5 // Discord's recommended run of silence before stopping
 )
 
-// Speaker tracks Discord's speaking flag tick by tick: after a few empty
-// ticks it sends five silence frames and drops the flag; the first audio
-// after that raises it again.
+// Speaker decides, tick by tick, whether to send audio, one of Discord's
+// silence frames, or nothing. The speaking flag is set once at join and
+// never dropped: clearing it and raising it again was found to kill the
+// stream on Discord's side (live test, 2026-10-17), while a run of silence
+// frames followed by nothing resumes cleanly.
 type Speaker struct {
-	speaking bool
-	empty    int // consecutive ticks without a packet
-	silence  int // silence frames sent in this quiet spell
-	started  bool
+	empty   int // consecutive ticks without a packet
+	silence int // silence frames sent in this quiet spell
 }
 
-// Tick reports what to send this tick, whether the speaking flag should be
-// set, and whether that flag changed (so the caller tells Discord).
-func (s *Speaker) Tick(havePacket bool) (send Send, speaking, changed bool) {
-	was := s.speaking
+func (s *Speaker) Tick(havePacket bool) Send {
 	if havePacket {
-		s.empty, s.silence, s.speaking = 0, 0, true
-		send = SendAudio
-	} else {
-		s.empty++
-		switch {
-		case s.empty <= graceTicks:
-			send = SendNothing
-		case s.silence < silenceFrames && s.speaking:
-			s.silence++
-			send = SendSilence
-		default:
-			s.speaking = false
-			send = SendNothing
-		}
+		s.empty, s.silence = 0, 0
+		return SendAudio
 	}
-	changed = s.speaking != was || (!s.started && s.speaking)
-	s.started = true
-	return send, s.speaking, changed
+	s.empty++
+	switch {
+	case s.empty <= graceTicks:
+		return SendNothing
+	case s.silence < silenceFrames:
+		s.silence++
+		return SendSilence
+	}
+	return SendNothing
 }
