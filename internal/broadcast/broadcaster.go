@@ -22,6 +22,7 @@ import (
 	dave "github.com/thomas-vilte/dave-go/session"
 
 	"github.com/brady1408/dotamp/internal/audio"
+	"github.com/brady1408/dotamp/internal/library"
 )
 
 // Config is everything a Broadcaster needs from the player.
@@ -33,6 +34,10 @@ type Config struct {
 	Mute   func(bool)   // silences the local device while live
 	Notify func(string) // notice line; safe from any goroutine
 	Logger *slog.Logger
+
+	Commands bool            // answer /play, /np, /queue from the room
+	Library  library.Library // the DJ's library, for search and resolving requests
+	Player   Player          // the queue, for requests and /np, /queue
 }
 
 var (
@@ -74,6 +79,9 @@ type Broadcaster struct {
 
 	client  *bot.Client
 	streams atomic.Int32 // live stream goroutines, for tests
+
+	cmu     sync.Mutex
+	choices map[string]choice // autocomplete entries offered lately
 }
 
 func New(cfg Config) *Broadcaster {
