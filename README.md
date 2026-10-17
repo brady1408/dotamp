@@ -74,7 +74,7 @@ Output is 32-bit float at one fixed device rate, 44.1 kHz unless `output_rate` s
 
 ## Discord
 
-dotamp can play into the voice channel you are in, so the call hears your queue in stereo at full quality, end-to-end encrypted like any other Discord call. One-time setup: create a bot at discord.com/developers (New Application → Bot → Reset Token), invite it to your server with View Channels, Connect and Speak, save the token on one line in `~/.config/dotamp/discord-token` (macOS: `~/Library/Application Support/dotamp/discord-token`), and run `dotamp discord YOUR_USER_ID` (Discord: Settings → Advanced → Developer Mode, then right-click your name → Copy User ID). Then join a voice channel and press `b`. Your own speakers go quiet while live and come back when you press `b` again; the visualizers keep moving. The bot follows you between channels and leaves when you do.
+dotamp can play into the voice channel you are in, so the call hears your queue in stereo at full quality, end-to-end encrypted like any other Discord call. One-time setup: create a bot at discord.com/developers (New Application → Bot → Reset Token), invite it to your server with View Channels, Connect and Speak, save the token on one line in `~/.config/dotamp/discord-token`, and run `dotamp discord YOUR_USER_ID` (Discord: Settings → Advanced → Developer Mode, then right-click your name → Copy User ID). Then join a voice channel and press `b`. Your own speakers go quiet while live and come back when you press `b` again; the visualizers keep moving. The bot follows you between channels and leaves when you do.
 
 ## Visualizers
 

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/disgoorg/disgo"
@@ -17,7 +19,7 @@ import (
 	"github.com/disgoorg/disgo/gateway"
 	"github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/snowflake/v2"
-	"github.com/thomas-vilte/dave-go/session"
+	dave "github.com/thomas-vilte/dave-go/session"
 
 	"github.com/brady1408/dotamp/internal/audio"
 )
@@ -33,21 +35,64 @@ type Config struct {
 	Logger *slog.Logger
 }
 
+var (
+	joinTimeout = 15 * time.Second // a voice handshake that takes longer has failed
+	retryDelay  = 2 * time.Second  // before the one reopen after a dropped connection
+)
+
+// deps is the Discord side, so tests can run the state machine on fakes.
+type deps struct {
+	connect     func(ctx context.Context) error // gateway up, cache warm
+	find        func() (Location, bool)
+	name        func(Location) string
+	createConn  func(guild snowflake.ID) voice.Conn
+	removeConn  func(guild snowflake.ID)
+	closeClient func(ctx context.Context)
+}
+
+// session is one voice connection and its goroutines.
+type session struct {
+	conn  voice.Conn
+	loc   Location
+	name  string
+	stop  chan struct{}
+	retry bool // this session is the one reopen after a drop; no second retry
+}
+
 // Broadcaster joins the voice channel the user is in and streams the feed
-// there. The gateway opens on the first Toggle and stays open; the voice
-// connection comes and goes.
+// there. Every state change claims busy, so a join, a follow and a leave
+// never overlap, and a teardown only applies to the session it was meant
+// for.
 type Broadcaster struct {
-	cfg    Config
-	mu     sync.Mutex
-	client *bot.Client
-	conn   voice.Conn
-	loc    Location
-	name   string
-	busy   bool
-	stop   chan struct{}
+	cfg  Config
+	deps deps
+
+	mu   sync.Mutex
+	cur  *session
+	busy bool
+
+	client  *bot.Client
+	streams atomic.Int32 // live stream goroutines, for tests
 }
 
 func New(cfg Config) *Broadcaster {
+	b := newWith(cfg, deps{})
+	b.deps = deps{
+		connect:    b.connectDiscord,
+		find:       func() (Location, bool) { return Find(states{b.client}, cfg.UserID) },
+		name:       b.channelName,
+		createConn: func(g snowflake.ID) voice.Conn { return b.client.VoiceManager.CreateConn(g) },
+		removeConn: func(g snowflake.ID) { b.client.VoiceManager.RemoveConn(g) },
+		closeClient: func(ctx context.Context) {
+			if b.client != nil {
+				b.client.Close(ctx)
+			}
+		},
+	}
+	return b
+}
+
+func newWith(cfg Config, d deps) *Broadcaster {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -57,40 +102,67 @@ func New(cfg Config) *Broadcaster {
 	if cfg.Mute == nil {
 		cfg.Mute = func(bool) {}
 	}
-	return &Broadcaster{cfg: cfg}
+	return &Broadcaster{cfg: cfg, deps: d}
 }
 
 // Channel names the channel being broadcast to, or "" when not live.
 func (b *Broadcaster) Channel() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.name
+	if b.cur == nil {
+		return ""
+	}
+	return b.cur.name
 }
 
-// connect opens the gateway once.
-func (b *Broadcaster) connect(ctx context.Context) error {
+// claim takes the busy flag; false means another state change is running
+// and the caller should give up rather than queue.
+func (b *Broadcaster) claim() bool {
 	b.mu.Lock()
-	have := b.client != nil
+	defer b.mu.Unlock()
+	if b.busy {
+		return false
+	}
+	b.busy = true
+	return true
+}
+
+func (b *Broadcaster) release() {
+	b.mu.Lock()
+	b.busy = false
 	b.mu.Unlock()
-	if have {
+}
+
+// guard turns a panic in a broadcast goroutine into a dropped broadcast
+// rather than a dead process in raw mode.
+func (b *Broadcaster) guard(where string) {
+	if r := recover(); r != nil {
+		b.cfg.Logger.Error("broadcast panic", "where", where, "panic", r, "stack", string(debug.Stack()))
+		b.cfg.Notify(fmt.Sprintf("Broadcast dropped: %v", r))
+		go b.leaveCurrent(context.Background())
+	}
+}
+
+// connectDiscord opens the gateway once.
+func (b *Broadcaster) connectDiscord(ctx context.Context) error {
+	if b.client != nil {
 		return nil
 	}
 	client, err := disgo.New(b.cfg.Token,
 		bot.WithLogger(b.cfg.Logger),
 		bot.WithGatewayConfigOpts(gateway.WithIntents(gateway.IntentGuilds, gateway.IntentGuildVoiceStates)),
 		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds, cache.FlagChannels, cache.FlagVoiceStates)),
-		bot.WithVoiceManagerConfigOpts(voice.WithDaveSessionCreateFunc(session.CreateFunc())),
+		bot.WithVoiceManagerConfigOpts(voice.WithDaveSessionCreateFunc(dave.CreateFunc())),
 		bot.WithEventListenerFunc(b.onVoiceState),
 	)
 	if err != nil {
 		return fmt.Errorf("Discord login failed: %w", err)
 	}
 	if err := client.OpenGateway(ctx); err != nil {
+		client.Close(ctx)
 		return fmt.Errorf("Discord login failed: %w", err)
 	}
-	b.mu.Lock()
 	b.client = client
-	b.mu.Unlock()
 	time.Sleep(1500 * time.Millisecond) // voice states arrive with the guilds
 	return nil
 }
@@ -99,6 +171,9 @@ func (b *Broadcaster) connect(ctx context.Context) error {
 type states struct{ c *bot.Client }
 
 func (s states) Each(fn func(guild, channel, user snowflake.ID) bool) {
+	if s.c == nil {
+		return
+	}
 	for g := range s.c.Caches.Guilds() {
 		for vs := range s.c.Caches.VoiceStates(g.ID) {
 			ch := snowflake.ID(0)
@@ -113,95 +188,102 @@ func (s states) Each(fn func(guild, channel, user snowflake.ID) bool) {
 }
 
 func (b *Broadcaster) channelName(loc Location) string {
-	if ch, ok := b.client.Caches.Channel(loc.Channel); ok {
-		return ch.Name()
+	if b.client != nil {
+		if ch, ok := b.client.Caches.Channel(loc.Channel); ok {
+			return ch.Name()
+		}
 	}
 	return loc.Channel.String()
 }
 
-// Toggle joins the channel the user is in, or leaves when live. A second
-// call while a join is in flight does nothing.
+// Toggle joins the channel the user is in, or leaves when live. A call
+// while another state change is running does nothing.
 func (b *Broadcaster) Toggle(ctx context.Context) error {
+	if !b.claim() {
+		return nil
+	}
+	defer b.release()
+	ctx, cancel := context.WithTimeout(ctx, joinTimeout)
+	defer cancel()
 	b.mu.Lock()
-	if b.busy {
-		b.mu.Unlock()
-		return nil
-	}
-	if b.conn != nil {
-		name := b.name
-		b.mu.Unlock()
-		b.leave(ctx)
-		b.cfg.Notify("Left " + name)
-		return nil
-	}
-	b.busy = true
+	cur := b.cur
 	b.mu.Unlock()
-	defer func() { b.mu.Lock(); b.busy = false; b.mu.Unlock() }()
-
-	if err := b.connect(ctx); err != nil {
+	if cur != nil {
+		b.leave(ctx, cur)
+		b.cfg.Notify("Left " + cur.name)
+		return nil
+	}
+	if err := b.deps.connect(ctx); err != nil {
 		return err
 	}
-	loc, ok := Find(states{b.client}, b.cfg.UserID)
+	loc, ok := b.deps.find()
 	if !ok {
 		return errors.New("You're not in a voice channel the bot can see")
 	}
 	return b.join(ctx, loc)
 }
 
+// join opens a voice connection and starts the session; the caller holds
+// busy.
 func (b *Broadcaster) join(ctx context.Context, loc Location) error {
-	conn := b.client.VoiceManager.CreateConn(loc.Guild)
+	conn := b.deps.createConn(loc.Guild)
 	if err := conn.Open(ctx, loc.Channel, false, true); err != nil {
-		b.client.VoiceManager.RemoveConn(loc.Guild)
+		conn.Close(context.Background())
+		b.deps.removeConn(loc.Guild)
 		b.cfg.Logger.Warn("broadcast join", "channel", loc.Channel, "err", err)
 		return fmt.Errorf("Broadcast failed: %w", err)
 	}
 	if err := conn.SetSpeaking(ctx, voice.SpeakingFlagMicrophone); err != nil {
-		conn.Close(ctx)
-		b.client.VoiceManager.RemoveConn(loc.Guild)
+		conn.Close(context.Background())
+		b.deps.removeConn(loc.Guild)
 		return fmt.Errorf("Broadcast failed: %w", err)
 	}
-	stop := make(chan struct{})
+	s := &session{conn: conn, loc: loc, name: b.deps.name(loc), stop: make(chan struct{})}
 	b.mu.Lock()
-	b.conn, b.loc, b.stop = conn, loc, stop
-	b.name = b.channelName(loc)
-	name := b.name
+	b.cur = s
 	b.mu.Unlock()
 	b.cfg.Mute(true)
-	go b.drain(conn, stop)
-	go b.stream(conn, stop)
-	b.cfg.Notify("Broadcasting to " + name)
+	go b.drain(s)
+	go b.stream(s)
+	b.cfg.Notify("Broadcasting to " + s.name)
 	return nil
 }
 
-// leave ends the broadcast if one is live and always unmutes.
-func (b *Broadcaster) leave(ctx context.Context) {
+// leave ends s if it is still the current session, and always unmutes.
+func (b *Broadcaster) leave(ctx context.Context, s *session) {
 	b.mu.Lock()
-	conn, stop := b.conn, b.stop
-	b.conn, b.name, b.stop = nil, "", nil
-	client := b.client
+	if b.cur != s {
+		b.mu.Unlock()
+		return
+	}
+	b.cur = nil
 	b.mu.Unlock()
-	if stop != nil {
-		close(stop)
-	}
-	if conn != nil {
-		conn.Close(ctx)
-		if client != nil {
-			client.VoiceManager.RemoveConn(conn.GuildID())
-		}
-	}
+	close(s.stop)
+	s.conn.Close(ctx)
+	b.deps.removeConn(s.loc.Guild)
 	b.cfg.Mute(false)
 }
 
+func (b *Broadcaster) leaveCurrent(ctx context.Context) {
+	b.mu.Lock()
+	cur := b.cur
+	b.mu.Unlock()
+	if cur != nil {
+		b.leave(ctx, cur)
+	}
+}
+
 // drain keeps the UDP socket from backing up; incoming audio is discarded.
-func (b *Broadcaster) drain(conn voice.Conn, stop chan struct{}) {
+func (b *Broadcaster) drain(s *session) {
+	defer b.guard("drain")
 	buf := make([]byte, 4096)
 	for {
 		select {
-		case <-stop:
+		case <-s.stop:
 			return
 		default:
 		}
-		if _, err := conn.UDP().Read(buf); err != nil {
+		if _, err := s.conn.UDP().Read(buf); err != nil {
 			return
 		}
 	}
@@ -210,11 +292,15 @@ func (b *Broadcaster) drain(conn voice.Conn, stop chan struct{}) {
 // stream pulls from the feed every 20 ms, encodes, and sends audio or
 // silence as the Speaker decides. The unmute is deferred before anything
 // that can fail, so no exit path leaves the speakers off.
-func (b *Broadcaster) stream(conn voice.Conn, stop chan struct{}) {
+func (b *Broadcaster) stream(s *session) {
 	defer b.cfg.Mute(false)
+	defer b.guard("stream")
+	b.streams.Add(1)
+	defer b.streams.Add(-1)
 	pipe, err := NewPipeline(b.cfg.Rate)
 	if err != nil {
 		b.cfg.Notify("Broadcast failed: " + err.Error())
+		go b.leave(context.Background(), s)
 		return
 	}
 	// The feed holds the last two seconds whether or not anyone listens;
@@ -226,11 +312,10 @@ func (b *Broadcaster) stream(conn voice.Conn, stop chan struct{}) {
 	var sp Speaker
 	tick := time.NewTicker(20 * time.Millisecond)
 	defer tick.Stop()
-	ctx := context.Background()
 	var pending [][]byte
 	for {
 		select {
-		case <-stop:
+		case <-s.stop:
 			return
 		case <-tick.C:
 		}
@@ -253,10 +338,19 @@ func (b *Broadcaster) stream(conn voice.Conn, stop chan struct{}) {
 		default:
 			continue
 		}
-		if _, err := conn.UDP().Write(pkt); err != nil {
+		if _, err := s.conn.UDP().Write(pkt); err != nil {
+			select {
+			case <-s.stop: // we are being torn down; the error is ours
+				return
+			default:
+			}
 			b.cfg.Logger.Warn("broadcast write", "err", err)
-			b.cfg.Notify("Broadcast dropped: " + err.Error())
-			go b.leave(ctx)
+			if s.retry {
+				b.cfg.Notify("Broadcast dropped: " + err.Error())
+				go b.leave(context.Background(), s)
+				return
+			}
+			go b.reopen(s, err)
 			return
 		}
 		if len(pending) > 5 { // a tenth of a second behind: drop to stay live
@@ -265,31 +359,61 @@ func (b *Broadcaster) stream(conn voice.Conn, stop chan struct{}) {
 	}
 }
 
+// reopen is the one retry after a dropped connection: leave, wait, join
+// the same channel again; a second failure ends the broadcast.
+func (b *Broadcaster) reopen(s *session, cause error) {
+	defer b.guard("reopen")
+	ctx, cancel := context.WithTimeout(context.Background(), joinTimeout)
+	defer cancel()
+	b.leave(ctx, s)
+	time.Sleep(retryDelay)
+	if !b.claim() {
+		b.cfg.Notify("Broadcast dropped: " + cause.Error())
+		return
+	}
+	defer b.release()
+	if err := b.join(ctx, s.loc); err != nil {
+		b.cfg.Notify("Broadcast dropped: " + cause.Error())
+		return
+	}
+	b.mu.Lock()
+	if b.cur != nil {
+		b.cur.retry = true
+	}
+	b.mu.Unlock()
+}
+
 // onVoiceState follows the user between channels and leaves when they do.
-// The work runs on its own goroutine: a join waits for voice events that
-// disgo delivers on the goroutine this handler is called from.
+// The work runs on its own goroutine, since a join waits for voice events
+// that disgo delivers on the goroutine this handler is called from, and it
+// claims busy like any other state change.
 func (b *Broadcaster) onVoiceState(e *events.GuildVoiceStateUpdate) {
 	if e.VoiceState.UserID != b.cfg.UserID {
 		return
 	}
 	b.mu.Lock()
-	live := b.conn != nil
-	loc, name := b.loc, b.name
+	cur := b.cur
 	b.mu.Unlock()
-	if !live {
+	if cur == nil {
 		return
 	}
-	channel := e.VoiceState.ChannelID
-	guild := e.VoiceState.GuildID
+	channel, guild := e.VoiceState.ChannelID, e.VoiceState.GuildID
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer b.guard("follow")
+		if !b.claim() {
+			return // a join or leave is already running; the user's next move or key catches up
+		}
+		defer b.release()
+		ctx, cancel := context.WithTimeout(context.Background(), joinTimeout)
 		defer cancel()
 		switch {
+		case channel == nil && guild != cur.loc.Guild:
+			// leaving voice on another server says nothing about this one
 		case channel == nil:
-			b.leave(ctx)
-			b.cfg.Notify("You left " + name + "; broadcast ended")
-		case *channel != loc.Channel:
-			b.leave(ctx)
+			b.leave(ctx, cur)
+			b.cfg.Notify("You left " + cur.name + "; broadcast ended")
+		case *channel != cur.loc.Channel || guild != cur.loc.Guild:
+			b.leave(ctx, cur)
 			if err := b.join(ctx, Location{guild, *channel}); err != nil {
 				b.cfg.Logger.Warn("broadcast follow", "err", err)
 				b.cfg.Notify(err.Error())
@@ -302,19 +426,15 @@ func (b *Broadcaster) onVoiceState(e *events.GuildVoiceStateUpdate) {
 func (b *Broadcaster) Close(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	b.leave(ctx)
-	b.mu.Lock()
-	client := b.client
-	b.client = nil
-	b.mu.Unlock()
-	if client != nil {
-		client.Close(ctx)
-	}
+	b.leaveCurrent(ctx)
+	b.deps.closeClient(ctx)
 }
 
 // Check logs in with the token over REST only and reports the bot's name
 // and the servers it is in, for `dotamp discord`.
 func Check(ctx context.Context, token string) (name string, guilds []string, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	get := func(path string, out any) error {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://discord.com/api/v10"+path, nil)
 		if err != nil {
