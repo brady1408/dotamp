@@ -85,3 +85,22 @@ func TestLoadRejectsNeitherServerNorAccount(t *testing.T) {
 		t.Fatal("expected an error with neither a server nor an account token")
 	}
 }
+
+func TestDiscordRequestFlagsRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	in := Config{Server: "http://plex:32400", Token: "abc", Discord: &Discord{UserID: "1", Commands: true, MaxPendingPerUser: 20, SaveNights: true}}
+	if err := Save(in); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := c.Discord
+	if d == nil || !d.Commands || d.MaxPendingPerUser != 20 || !d.SaveNights {
+		t.Fatalf("discord = %+v", d)
+	}
+	if got, want := HistoryDir(), filepath.Join(filepath.Dir(Path()), "history"); got != want {
+		t.Fatalf("HistoryDir() = %q, want %q", got, want)
+	}
+}

@@ -35,9 +35,15 @@ type Config struct {
 
 // Discord is the bot that broadcasts the player into a voice channel.
 type Discord struct {
-	UserID    string `json:"user_id"`              // the account the bot follows into voice
-	TokenFile string `json:"token_file,omitempty"` // bot token, one line; default <config dir>/discord-token
+	UserID            string `json:"user_id"`                        // the account the bot follows into voice
+	TokenFile         string `json:"token_file,omitempty"`           // bot token, one line; default <config dir>/discord-token
+	Commands          bool   `json:"commands,omitempty"`             // answer /play, /np, /queue from the voice channel
+	MaxPendingPerUser int    `json:"max_pending_per_user,omitempty"` // songs one person may have waiting; 0 = unlimited
+	SaveNights        bool   `json:"save_nights,omitempty"`          // save each broadcast's played songs as a playlist
 }
+
+// HistoryDir holds one JSON-lines file per Discord server of what played live.
+func HistoryDir() string { return filepath.Join(filepath.Dir(Path()), "history") }
 
 // DiscordTokenPath is where the bot token is read from.
 func (c Config) DiscordTokenPath() string {
