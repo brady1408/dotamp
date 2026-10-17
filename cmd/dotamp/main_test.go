@@ -248,6 +248,7 @@ func TestFirstRunDecliningEverythingExplains(t *testing.T) {
 func TestFallsBackToAServerThatHasMusic(t *testing.T) {
 	plex := fakePlex(t)
 	t.Setenv("DOTAMP_PLEXTV", plex.URL)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // the fallback saves config; never the real one
 	cfg := &config.Config{AccountToken: "acct-token", ClientID: "cid"}
 	c, srv, err := fallbackMusicServer(context.Background(), cfg, "tb", 1000)
 	if err != nil {
