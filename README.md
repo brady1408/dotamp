@@ -74,7 +74,22 @@ Output is 32-bit float at one fixed device rate, 44.1 kHz unless `output_rate` s
 
 ## Discord
 
-dotamp can play into the voice channel you are in, so the call hears your queue in stereo at full quality, end-to-end encrypted like any other Discord call. One-time setup: create a bot at discord.com/developers (New Application → Bot → Reset Token), invite it to your server with View Channels, Connect and Speak, save the token on one line in `~/.config/dotamp/discord-token`, and run `dotamp discord YOUR_USER_ID` (Discord: Settings → Advanced → Developer Mode, then right-click your name → Copy User ID). Then join a voice channel and press `b`. Your own speakers go quiet while live and come back when you press `b` again; the visualizers keep moving. The bot follows you between channels and leaves when you do.
+dotamp can play into the voice channel you are in, so the call hears your queue in stereo at full quality, end-to-end encrypted like any other Discord call. Join a voice channel and press `b`. Your own speakers go quiet while live and come back when you press `b` again; the visualizers keep moving. The bot follows you between channels and leaves when you do.
+
+### Setting up your bot
+
+Each person runs their own bot. Discord only lets a bot account join voice, and a bot account can be in one voice channel per server, so a shared bot would fight over itself. Making one is free and takes about five minutes:
+
+1. Go to [discord.com/developers/applications](https://discord.com/developers/applications), click **New Application**, and name it (the name is what the voice channel shows, so "dotamp" or your own name both work).
+2. Open the **Bot** tab and click **Reset Token**. Copy the token; Discord shows it once.
+3. Save the token on one line in `~/.config/dotamp/discord-token`. Nothing else goes in that file, and it never goes in `config.json`.
+4. Invite the bot to your server: **OAuth2** tab, **URL Generator**, tick the `bot` scope, then the permissions **View Channels**, **Connect** and **Speak**. Open the generated URL and pick the server. The bot needs no message permissions and no privileged intents.
+5. Find your own user ID: in Discord, Settings → Advanced → **Developer Mode**, then right-click your name anywhere and **Copy User ID**.
+6. Run `dotamp discord YOUR_USER_ID`. It saves the ID, checks the token logs in, and lists the servers the bot is in.
+
+Now join a voice channel on one of those servers and press `b`. If several people in a server each have dotamp and their own bot, they can all broadcast at once, each bot following its owner.
+
+The bot does nothing until you press `b`; dotamp runs normally with no Discord setup at all.
 
 ## Visualizers
 
