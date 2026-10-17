@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -32,6 +33,7 @@ type App struct {
 	search   SearchField
 	saver    Saver
 	cast     Broadcaster       // nil until Discord is configured
+	casting  atomic.Bool       // a Toggle is in flight
 	saving   bool              // the input field is the save prompt, not search
 	renaming *library.Playlist // the input field is the rename prompt for this playlist
 	deleting *library.Playlist // waiting for y/n to delete this playlist
@@ -321,6 +323,20 @@ func (a *App) key(ev *tcell.EventKey) bool {
 		}
 	case ActToPlaylist:
 		a.toPlaylist(ctx, list.Selected())
+	case ActBroadcast:
+		if a.cast == nil {
+			a.setNotice("Discord is not set up; run dotamp discord USER_ID")
+			return false
+		}
+		if !a.casting.CompareAndSwap(false, true) {
+			return false // a join is in flight
+		}
+		go func() {
+			defer a.casting.Store(false)
+			if err := a.cast.Toggle(context.Background()); err != nil {
+				a.Notify(err.Error())
+			}
+		}()
 	case ActRename:
 		if p, ok := a.browser.TargetPlaylist(); ok && a.tab == tabLibrary {
 			cp := *p
@@ -605,6 +621,9 @@ func (a *App) Draw() {
 	}
 	if !has { // stopped with nothing queued: the clock reads idle, not the last track's length
 		st.Position, st.Length = 0, 0
+	}
+	if a.cast != nil {
+		st.Live = a.cast.Channel()
 	}
 	if has {
 		st.Artist, st.Title, st.Album, st.Codec = cur.Artist, cur.Title, cur.Album, cur.Codec

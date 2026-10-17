@@ -22,6 +22,7 @@ type DeckState struct {
 	Shuffle, Repeat  bool
 	Notice           string
 	Tick             int
+	Live             string // the Discord channel being broadcast to; "" when not live
 }
 
 func Clock(d time.Duration) string {
@@ -63,6 +64,9 @@ func DrawDeck(s tcell.Screen, r Rect, st DeckState) {
 	}
 	left := fmt.Sprintf(" %s  %s / %s   ", glyph, Clock(st.Position), Clock(st.Length))
 	x := r.X + PutStr(s, r.X, r.Y, left, bold)
+	if st.Live != "" { // broadcasting: the badge sits between the clock and the title
+		x += PutStr(s, x, r.Y, "● "+st.Live+"   ", bold.Foreground(tcell.PaletteColor(9)))
+	}
 	title := st.Title
 	if st.Artist != "" {
 		title = st.Artist + " — " + st.Title
@@ -91,6 +95,9 @@ func DrawDeck(s tcell.Screen, r Rect, st DeckState) {
 			flags += " ↻"
 		}
 		right := "vol " + vol + flags + " "
+		if st.Live != "" { // the local volume does not apply while Discord is the output
+			right = Fit("discord", uniseg.StringWidth("vol "+vol)) + flags + " "
+		}
 		rw := uniseg.StringWidth(right)
 		left := r.W - rw
 		x := r.X + PutStr(s, r.X, r.Y+1, Fit(info, min(uniseg.StringWidth(info), left)), dim)

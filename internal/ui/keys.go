@@ -36,6 +36,7 @@ const (
 	ActMoveDown
 	ActRename
 	ActDelete
+	ActBroadcast
 )
 
 func ActionFor(ev *tcell.EventKey) Action {
@@ -102,6 +103,8 @@ func ActionFor(ev *tcell.EventKey) Action {
 			return ActRename
 		case 'd':
 			return ActDelete
+		case 'b':
+			return ActBroadcast
 		case 'j':
 			return ActDown
 		case 'k':

@@ -810,3 +810,89 @@ func TestRenameAndDeleteAreInertOffPlaylists(t *testing.T) {
 		t.Fatalf("nothing to act on: %v", lib.calls)
 	}
 }
+
+type fakeCast struct {
+	mu      sync.Mutex
+	live    string
+	toggles int
+	err     error
+	block   chan struct{} // when set, Toggle waits on it (a slow join)
+}
+
+func (f *fakeCast) Toggle(context.Context) error {
+	f.mu.Lock()
+	f.toggles++
+	b := f.block
+	f.mu.Unlock()
+	if b != nil {
+		<-b
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	if f.live == "" {
+		f.live = "a-team"
+	} else {
+		f.live = ""
+	}
+	return nil
+}
+func (f *fakeCast) Channel() string { f.mu.Lock(); defer f.mu.Unlock(); return f.live }
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition never met")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestBroadcastKeyTogglesAndTheDeckShowsIt(t *testing.T) {
+	app, s, _ := newApp(t)
+	key(app, tcell.KeyRune, 'b')
+	app.Draw()
+	if r := rows(s); !strings.Contains(r[1], "Discord is not set up") {
+		t.Fatalf("no broadcaster: %q", r[1])
+	}
+	fc := &fakeCast{}
+	app.SetBroadcaster(fc)
+	key(app, tcell.KeyRune, 'b')
+	waitFor(t, func() bool { return fc.Channel() == "a-team" })
+	app.Draw()
+	r := rows(s)
+	if !strings.Contains(r[0], "● a-team") || !strings.Contains(r[1], "discord") || strings.Contains(r[1], "vol ") {
+		t.Fatalf("deck rows = %q / %q", r[0], r[1])
+	}
+	key(app, tcell.KeyRune, 'b')
+	waitFor(t, func() bool { return fc.Channel() == "" })
+	app.noticeUntil = time.Now().Add(-time.Second) // the earlier notice would otherwise hide the bar
+	app.Draw()
+	if r := rows(s); strings.Contains(r[0], "●") || !strings.Contains(r[1], "vol ") {
+		t.Fatalf("deck after leaving = %q / %q", r[0], r[1])
+	}
+	fc.err = errors.New("Broadcast failed: nope")
+	key(app, tcell.KeyRune, 'b')
+	waitFor(t, func() bool { fc.mu.Lock(); defer fc.mu.Unlock(); return fc.toggles == 3 })
+	time.Sleep(20 * time.Millisecond)
+	app.Handle(app.s.PollEvent()) // the posted error notice
+	app.Draw()
+	if r := rows(s); !strings.Contains(r[1], "Broadcast failed: nope") {
+		t.Fatalf("error notice = %q", r[1])
+	}
+}
+
+func TestBroadcastKeyIgnoresASecondPressWhileJoining(t *testing.T) {
+	app, _, _ := newApp(t)
+	fc := &fakeCast{block: make(chan struct{})}
+	app.SetBroadcaster(fc)
+	key(app, tcell.KeyRune, 'b')
+	key(app, tcell.KeyRune, 'b')
+	time.Sleep(20 * time.Millisecond)
+	close(fc.block)
+	waitFor(t, func() bool { fc.mu.Lock(); defer fc.mu.Unlock(); return fc.toggles == 1 && fc.live == "a-team" })
+}

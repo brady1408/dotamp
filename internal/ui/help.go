@@ -18,6 +18,7 @@ var helpLines = []string{
 	"t          add to a playlist",
 	"x / [ / ]  remove / move track (playlist)",
 	"e / d      rename / delete the playlist",
+	"b          broadcast to your Discord voice channel",
 	"x / c      remove the selected track / clear the queue",
 	"Backspace  back (Library)",
 	"Esc        back to the Library menu",

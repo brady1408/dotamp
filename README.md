@@ -54,6 +54,7 @@ Run `dotamp`. The deck on top shows the track, its album and format, the clock a
 | `t` | add the track, album or playlist to one of your playlists |
 | `x` / `[` / `]` | in a playlist: remove the track / move it up / move it down |
 | `e` / `d` | rename / delete the playlist (delete asks y/n) |
+| `b` | broadcast to your Discord voice channel / stop |
 | `x` / `c` | remove the selected track from the queue / clear the queue |
 | Backspace | back |
 | Esc | straight back to the Library menu |
@@ -70,6 +71,10 @@ The Library opens on a menu: **Artists** is every artist on the current server w
 FLAC and MP3 play as the original file, with gapless transitions between tracks. Any other format, ALAC, AAC, Ogg, WAV, is transcoded to MP3 320 by the server on the way, and the deck shows what arrived. A file that would not fit through Plex's relay is transcoded the same way. Native ALAC is the first decoder to add if people ask; AAC will stay with the server, since the only pure Go route is a cgo one.
 
 Output is 32-bit float at one fixed device rate, 44.1 kHz unless `output_rate` says otherwise. Every file is converted to that rate once, through a windowed-sinc resampler that passes a tone within a fraction of a decibel and rejects aliasing by better than 40 dB. If your DAC runs at 48 or 96 kHz, set `output_rate` to match and nothing is converted twice.
+
+## Discord
+
+dotamp can play into the voice channel you are in, so the call hears your queue in stereo at full quality, end-to-end encrypted like any other Discord call. One-time setup: create a bot at discord.com/developers (New Application → Bot → Reset Token), invite it to your server with View Channels, Connect and Speak, save the token on one line in `~/.config/dotamp/discord-token` (macOS: `~/Library/Application Support/dotamp/discord-token`), and run `dotamp discord YOUR_USER_ID` (Discord: Settings → Advanced → Developer Mode, then right-click your name → Copy User ID). Then join a voice channel and press `b`. Your own speakers go quiet while live and come back when you press `b` again; the visualizers keep moving. The bot follows you between channels and leaves when you do.
 
 ## Visualizers
 
@@ -99,6 +104,12 @@ The log lives at `~/Library/Caches/dotamp/dotamp.log` on macOS and `~/.cache/dot
 
 The keyboard's media keys, play/pause, next and previous, reach dotamp even when another window has focus. On Windows it registers them as global hotkeys at start, which takes them from other players while it runs. On Linux it registers as an MPRIS player on the session bus, so the desktop routes the keys to it and its media widget shows the track. On macOS it registers with Now Playing, so the keys, the Control Centre widget and the Touch Bar all drive it and show the track. Set `"disable_media_keys": true` in the config to opt out.
 
+```json
+"discord": {"user_id": "123456789012345678", "token_file": "~/.config/dotamp/discord-token"}
+```
+
+`token_file` is optional and defaults to the path above. The token never goes into config.json.
+
 `"scope_afterglow": true` keeps the oscilloscope's previous frame on screen a moment longer in a dim green under the live trace, the way a phosphor screen fades. Off by default; try both, opinions differ.
 
 `dotamp --silent` runs without a sound device: nothing is heard, but the visualizers move exactly as they would over speakers. It is how the pictures above are made, and it lets dotamp run on a box with no audio.
@@ -119,7 +130,7 @@ On macOS 15 and later the terminal app needs Local Network access the first time
     make test
     make demo       # re-record the pictures in docs/ (needs tmux, asciinema, agg, ffmpeg, Iosevka)
 
-Pure Go, no cgo, on every platform.
+Pure Go, no cgo, on every platform. Discord support uses disgo, dave-go (DAVE end-to-end encryption in pure Go) and gopus (Opus in pure Go); Go 1.27.
 
 ## License
 
