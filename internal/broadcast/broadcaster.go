@@ -151,7 +151,7 @@ func (b *Broadcaster) connectDiscord(ctx context.Context) error {
 		return nil
 	}
 	client, err := disgo.New(b.cfg.Token,
-		bot.WithLogger(b.cfg.Logger),
+		bot.WithLogger(slog.New(warnOnly{b.cfg.Logger.Handler()})),
 		bot.WithGatewayConfigOpts(gateway.WithIntents(gateway.IntentGuilds, gateway.IntentGuildVoiceStates)),
 		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds, cache.FlagChannels, cache.FlagVoiceStates)),
 		bot.WithVoiceManagerConfigOpts(voice.WithDaveSessionCreateFunc(dave.CreateFunc())),
@@ -196,6 +196,14 @@ func (b *Broadcaster) awaitLeft(ctx context.Context, guild snowflake.ID) {
 	}
 	time.Sleep(100 * time.Millisecond) // the voice manager handles the same event; let it pass
 }
+
+// warnOnly keeps disgo and dave-go, chatty at Info, down to warnings in a
+// log that carries our own Info lines.
+type warnOnly struct{ slog.Handler }
+
+func (w warnOnly) Enabled(_ context.Context, l slog.Level) bool { return l >= slog.LevelWarn }
+func (w warnOnly) WithAttrs(a []slog.Attr) slog.Handler         { return warnOnly{w.Handler.WithAttrs(a)} }
+func (w warnOnly) WithGroup(g string) slog.Handler              { return warnOnly{w.Handler.WithGroup(g)} }
 
 type states struct{ c *bot.Client }
 

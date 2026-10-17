@@ -681,7 +681,7 @@ func run(debugLog, silent bool) (err error) {
 			bc := broadcast.New(broadcast.Config{
 				Token: strings.TrimSpace(string(tok)), UserID: uid, Rate: rate, Feed: eng.Feed(),
 				Mute: eng.SetLocalMute, Notify: func(m string) { app.Notify(m) },
-				Logger: slog.New(slog.NewTextHandler(logf, &slog.HandlerOptions{Level: slog.LevelWarn})),
+				Logger: slog.New(slog.NewTextHandler(logf, &slog.HandlerOptions{Level: slog.LevelInfo})),
 			})
 			defer bc.Close(context.Background())
 			app.SetBroadcaster(bc)
