@@ -375,6 +375,12 @@ func (a *App) saveQueue(ctx context.Context, name string) {
 	}
 }
 
+// SaveNotice is saveNotice for callers outside the package, such as the
+// Discord night save.
+func SaveNotice(name string, saved []library.Saved, err error, serverName func(string) string) string {
+	return saveNotice(name, saved, err, serverName)
+}
+
 // saveNotice words the result of a save: every server that took it, then
 // the first failure if there was one.
 func saveNotice(name string, saved []library.Saved, err error, serverName func(string) string) string {

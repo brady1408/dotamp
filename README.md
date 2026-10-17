@@ -91,6 +91,18 @@ Now join a voice channel on one of those servers and press `b`. If several peopl
 
 The bot does nothing until you press `b`; dotamp runs normally with no Discord setup at all.
 
+### Requests from the room
+
+Set `"commands": true` in the `discord` block and the bot answers three slash commands in any server it is in, for people in the voice channel it is playing to:
+
+- `/play <what>` adds a track, album or playlist from your library; autocomplete searches as they type. The reply is public so the room sees who added what.
+- `/np` says what is playing and who asked for it.
+- `/queue` lists what is coming, with names.
+
+Requests are fair by construction: each person gets a lane, and the lanes take turns with your own queue, one song each. Forty requests from one person just fill that person's lane. `max_pending_per_user` caps a lane if you want one (0 = unlimited). Requested songs show the requester's name in the Queue tab, and a Requests section under the queue shows who is waiting. `c` clears the queue and every lane.
+
+Every song played while broadcasting is logged under `~/.config/dotamp/history/`, one file per server. The Library's **Nights** menu turns a server's history into a queue of its most-played songs, recent nights weighing more and skips counting against. With `"save_nights": true` each broadcast is also saved as a playlist on your music server, named for the channel and date.
+
 ## Visualizers
 
 `v` cycles four views of what the speaker is playing right now, all drawn from the same audio tap thirty times a second, all taking their colours from your terminal's palette:
@@ -120,7 +132,8 @@ The log lives at `~/Library/Caches/dotamp/dotamp.log` on macOS and `~/.cache/dot
 The keyboard's media keys, play/pause, next and previous, reach dotamp even when another window has focus. On Windows it registers them as global hotkeys at start, which takes them from other players while it runs. On Linux it registers as an MPRIS player on the session bus, so the desktop routes the keys to it and its media widget shows the track. On macOS it registers with Now Playing, so the keys, the Control Centre widget and the Touch Bar all drive it and show the track. Set `"disable_media_keys": true` in the config to opt out.
 
 ```json
-"discord": {"user_id": "123456789012345678", "token_file": "~/.config/dotamp/discord-token"}
+"discord": {"user_id": "123456789012345678", "token_file": "~/.config/dotamp/discord-token",
+            "commands": false, "max_pending_per_user": 0, "save_nights": false}
 ```
 
 `token_file` is optional and defaults to the path above. The token never goes into config.json.

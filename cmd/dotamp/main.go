@@ -22,6 +22,8 @@ import (
 	"github.com/brady1408/dotamp/internal/audio"
 	"github.com/brady1408/dotamp/internal/broadcast"
 	"github.com/brady1408/dotamp/internal/config"
+	"github.com/brady1408/dotamp/internal/history"
+	"github.com/brady1408/dotamp/internal/library"
 	"github.com/brady1408/dotamp/internal/mediakeys"
 	"github.com/brady1408/dotamp/internal/multi"
 	"github.com/brady1408/dotamp/internal/netlog"
@@ -678,13 +680,44 @@ func run(debugLog, silent bool) (err error) {
 	if cfg.Discord != nil {
 		if tok, err := os.ReadFile(cfg.DiscordTokenPath()); err == nil {
 			uid, _ := snowflake.Parse(cfg.Discord.UserID)
-			bc := broadcast.New(broadcast.Config{
+			bcfg := broadcast.Config{
 				Token: strings.TrimSpace(string(tok)), UserID: uid, Rate: rate, Feed: eng.Feed(),
 				Mute: eng.SetLocalMute, Notify: func(m string) { app.Notify(m) },
 				Logger: slog.New(slog.NewTextHandler(logf, &slog.HandlerOptions{Level: slog.LevelInfo})),
-			})
+			}
+			serverName := func(id string) string {
+				for _, s := range lib.Servers() {
+					if s.ID == id {
+						return s.Name
+					}
+				}
+				return id
+			}
+			if cfg.Discord.Commands {
+				bcfg.Commands = true
+				bcfg.Library = lib
+				bcfg.Player = player{ctrl, eng}
+				bcfg.History = history.NewWriter(config.HistoryDir())
+				bcfg.SaveNights = cfg.Discord.SaveNights
+				bcfg.SaveNight = func(ctx context.Context, name string, ts []library.Track) (string, error) {
+					saved, err := lib.SaveQueue(ctx, name, ts)
+					return ui.SaveNotice(name, saved, err, serverName), err
+				}
+				ctrl.SetMaxPending(cfg.Discord.MaxPendingPerUser)
+			}
+			bc := broadcast.New(bcfg)
 			defer bc.Close(context.Background())
 			app.SetBroadcaster(bc)
+			if cfg.Discord.Commands {
+				ctrl.SetTrackEnd(bc.TrackEnded)
+				app.SetNights(nights{dir: config.HistoryDir(), servers: func() []string {
+					var ids []string
+					for _, s := range lib.Servers() {
+						ids = append(ids, s.ID)
+					}
+					return ids
+				}, name: bc.GuildName})
+			}
 		} else {
 			log.Printf("discord: %v", err)
 		}

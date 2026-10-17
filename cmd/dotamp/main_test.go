@@ -10,8 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/brady1408/dotamp/internal/config"
+	"github.com/brady1408/dotamp/internal/history"
+	"github.com/brady1408/dotamp/internal/library"
 )
 
 func build(t *testing.T) string {
@@ -293,5 +296,17 @@ func TestDiscordCommandSavesUserAndChecksTheTokenFile(t *testing.T) {
 	}
 	if out, err := exec.Command(bin, "discord", "notanumber").CombinedOutput(); err == nil || !strings.Contains(string(out), "usage") {
 		t.Fatalf("a bad id must show usage: %v\n%s", err, out)
+	}
+}
+
+func TestNightAdapterSkipsTracksFromUnreachableServers(t *testing.T) {
+	dir := t.TempDir()
+	w := history.NewWriter(dir)
+	w.Append("g1", history.Entry{At: time.Now(), Track: library.Track{ID: "a:1", Server: "a", Duration: time.Minute}, Played: 60})
+	w.Append("g1", history.Entry{At: time.Now(), Track: library.Track{ID: "b:1", Server: "b", Duration: time.Minute}, Played: 60})
+	n := nights{dir: dir, servers: func() []string { return []string{"a"} }, name: func(id string) string { return "Kicarus" }}
+	name, ts, skipped, err := n.Night(context.Background(), "g1")
+	if err != nil || name != "Kicarus" || len(ts) != 1 || ts[0].ID != "a:1" || skipped != 1 {
+		t.Fatalf("%q %v %d %v", name, ts, skipped, err)
 	}
 }
