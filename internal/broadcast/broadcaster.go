@@ -17,11 +17,13 @@ import (
 	"github.com/disgoorg/disgo/cache"
 	"github.com/disgoorg/disgo/events"
 	"github.com/disgoorg/disgo/gateway"
+	"github.com/disgoorg/disgo/rest"
 	"github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/snowflake/v2"
 	dave "github.com/thomas-vilte/dave-go/session"
 
 	"github.com/brady1408/dotamp/internal/audio"
+	"github.com/brady1408/dotamp/internal/history"
 	"github.com/brady1408/dotamp/internal/library"
 )
 
@@ -35,9 +37,12 @@ type Config struct {
 	Notify func(string) // notice line; safe from any goroutine
 	Logger *slog.Logger
 
-	Commands bool            // answer /play, /np, /queue from the room
-	Library  library.Library // the DJ's library, for search and resolving requests
-	Player   Player          // the queue, for requests and /np, /queue
+	Commands   bool            // answer /play, /np, /queue from the room
+	Library    library.Library // the DJ's library, for search and resolving requests
+	Player     Player          // the queue, for requests and /np, /queue
+	History    *history.Writer // what played while live, per server; nil = no log
+	SaveNights bool            // save each broadcast's played songs as a playlist on leave
+	SaveNight  func(ctx context.Context, name string, ts []library.Track) (notice string, err error)
 }
 
 var (
@@ -53,6 +58,9 @@ type deps struct {
 	createConn  func(guild snowflake.ID) voice.Conn
 	removeConn  func(guild snowflake.ID)
 	awaitLeft   func(ctx context.Context, guild snowflake.ID) // Discord has seen us leave the guild's voice
+	guilds      func() []snowflake.ID                         // servers the bot is in
+	register    func(ctx context.Context, guild snowflake.ID) error
+	voiceOf     func(guild, user snowflake.ID) (snowflake.ID, bool) // the channel a user is in
 	closeClient func(ctx context.Context)
 }
 
@@ -62,7 +70,8 @@ type session struct {
 	loc   Location
 	name  string
 	stop  chan struct{}
-	retry bool // this session is the one reopen after a drop; no second retry
+	retry bool            // this session is the one reopen after a drop; no second retry
+	night []library.Track // what played while this session was live, in order
 }
 
 // Broadcaster joins the voice channel the user is in and streams the feed
@@ -80,8 +89,9 @@ type Broadcaster struct {
 	client  *bot.Client
 	streams atomic.Int32 // live stream goroutines, for tests
 
-	cmu     sync.Mutex
-	choices map[string]choice // autocomplete entries offered lately
+	cmu        sync.Mutex
+	choices    map[string]choice // autocomplete entries offered lately
+	registered map[snowflake.ID]bool
 }
 
 func New(cfg Config) *Broadcaster {
@@ -93,6 +103,23 @@ func New(cfg Config) *Broadcaster {
 		createConn: func(g snowflake.ID) voice.Conn { return b.client.VoiceManager.CreateConn(g) },
 		removeConn: func(g snowflake.ID) { b.client.VoiceManager.RemoveConn(g) },
 		awaitLeft:  b.awaitLeft,
+		guilds: func() (ids []snowflake.ID) {
+			for g := range b.client.Caches.Guilds() {
+				ids = append(ids, g.ID)
+			}
+			return
+		},
+		register: func(ctx context.Context, g snowflake.ID) error {
+			_, err := b.client.Rest.SetGuildCommands(b.client.ApplicationID, g, commandDefs(), rest.WithCtx(ctx))
+			return err
+		},
+		voiceOf: func(g, u snowflake.ID) (snowflake.ID, bool) {
+			vs, ok := b.client.Caches.VoiceState(g, u)
+			if !ok || vs.ChannelID == nil {
+				return 0, false
+			}
+			return *vs.ChannelID, true
+		},
 		closeClient: func(ctx context.Context) {
 			if b.client != nil {
 				b.client.Close(ctx)
@@ -164,6 +191,9 @@ func (b *Broadcaster) connectDiscord(ctx context.Context) error {
 		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds, cache.FlagChannels, cache.FlagVoiceStates)),
 		bot.WithVoiceManagerConfigOpts(voice.WithDaveSessionCreateFunc(dave.CreateFunc())),
 		bot.WithEventListenerFunc(b.onVoiceState),
+		bot.WithEventListenerFunc(b.onCommand),
+		bot.WithEventListenerFunc(b.onAutocomplete),
+		bot.WithEventListenerFunc(b.onGuildJoin),
 	)
 	if err != nil {
 		return fmt.Errorf("Discord login failed: %w", err)
@@ -261,6 +291,9 @@ func (b *Broadcaster) Toggle(ctx context.Context) error {
 	if err := b.deps.connect(ctx); err != nil {
 		return err
 	}
+	if b.cfg.Commands {
+		b.registerCommands(ctx)
+	}
 	loc, ok := b.deps.find()
 	if !ok {
 		return errors.New("You're not in a voice channel the bot can see")
@@ -307,6 +340,72 @@ func (b *Broadcaster) leave(ctx context.Context, s *session) {
 	s.conn.Close(ctx)
 	b.deps.removeConn(s.loc.Guild)
 	b.cfg.Mute(false)
+	if b.cfg.SaveNights && b.cfg.SaveNight != nil && len(s.night) > 0 {
+		name := "Discord " + s.name + " " + time.Now().Format("2006-01-02")
+		go func() {
+			defer b.guard("save night")
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			msg, err := b.cfg.SaveNight(ctx, name, s.night)
+			if err != nil && msg == "" {
+				msg = "Save failed: " + err.Error()
+			}
+			b.cfg.Notify(msg)
+		}()
+	}
+}
+
+// registerCommands puts the slash commands on every server the bot is in,
+// once per server per run.
+func (b *Broadcaster) registerCommands(ctx context.Context) {
+	if b.registered == nil {
+		b.registered = map[snowflake.ID]bool{}
+	}
+	failed := false
+	for _, g := range b.deps.guilds() {
+		if b.registered[g] {
+			continue
+		}
+		if err := b.deps.register(ctx, g); err != nil {
+			b.cfg.Logger.Warn("register commands", "guild", g, "err", err)
+			failed = true
+			continue
+		}
+		b.registered[g] = true
+	}
+	if failed {
+		b.cfg.Notify("Discord commands failed to register: see the log")
+	}
+}
+
+// TrackEnded records a track that stopped being current while live: into
+// the history log and the night's list. Not live, it is nothing.
+func (b *Broadcaster) TrackEnded(t library.Track, played time.Duration, by, name string) {
+	b.mu.Lock()
+	cur := b.cur
+	if cur != nil {
+		cur.night = append(cur.night, t)
+	}
+	b.mu.Unlock()
+	if cur == nil || b.cfg.History == nil {
+		return
+	}
+	e := history.Entry{At: time.Now().UTC(), Channel: cur.name, By: by, Name: name, Played: played.Seconds(), Track: t}
+	if err := b.cfg.History.Append(cur.loc.Guild.String(), e); err != nil {
+		b.cfg.Logger.Warn("history", "err", err)
+	}
+}
+
+// GuildName is the server's name when the bot is connected, else the ID.
+func (b *Broadcaster) GuildName(id string) string {
+	if b.client != nil {
+		if g, err := snowflake.Parse(id); err == nil {
+			if guild, ok := b.client.Caches.Guild(g); ok {
+				return guild.Name
+			}
+		}
+	}
+	return id
 }
 
 func (b *Broadcaster) leaveCurrent(ctx context.Context) {

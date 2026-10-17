@@ -3,6 +3,7 @@ package broadcast
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -17,6 +18,8 @@ import (
 	"github.com/disgoorg/snowflake/v2"
 
 	"github.com/brady1408/dotamp/internal/audio"
+	"github.com/brady1408/dotamp/internal/history"
+	"github.com/brady1408/dotamp/internal/library"
 )
 
 // fakeUDP stands in for the voice socket: Write can fail or panic on demand.
@@ -68,18 +71,19 @@ func (c *fakeConn) Close(context.Context)                                  { c.c
 
 // harness wires a Broadcaster to fakes and records what it did.
 type harness struct {
-	b        *Broadcaster
-	mu       sync.Mutex
-	conns    []*fakeConn
-	removed  int
-	notices  []string
-	mutes    []bool
-	loc      Location
-	found    bool
-	openWait bool
-	udpErr   error
-	panicAt  int
-	order    []string // "create" and "left" in the order the broadcaster asked
+	b          *Broadcaster
+	mu         sync.Mutex
+	conns      []*fakeConn
+	removed    int
+	notices    []string
+	mutes      []bool
+	loc        Location
+	found      bool
+	openWait   bool
+	udpErr     error
+	panicAt    int
+	order      []string // "create" and "left" in the order the broadcaster asked
+	registered []snowflake.ID
 }
 
 func newHarness(t *testing.T) *harness {
@@ -107,8 +111,16 @@ func newHarness(t *testing.T) *harness {
 			h.order = append(h.order, "create")
 			return c
 		},
-		removeConn:  func(snowflake.ID) { h.mu.Lock(); h.removed++; h.mu.Unlock() },
-		awaitLeft:   func(context.Context, snowflake.ID) { h.mu.Lock(); h.order = append(h.order, "left"); h.mu.Unlock() },
+		removeConn: func(snowflake.ID) { h.mu.Lock(); h.removed++; h.mu.Unlock() },
+		awaitLeft:  func(context.Context, snowflake.ID) { h.mu.Lock(); h.order = append(h.order, "left"); h.mu.Unlock() },
+		guilds:     func() []snowflake.ID { return []snowflake.ID{1, 2} },
+		register: func(_ context.Context, g snowflake.ID) error {
+			h.mu.Lock()
+			h.registered = append(h.registered, g)
+			h.mu.Unlock()
+			return nil
+		},
+		voiceOf:     func(snowflake.ID, snowflake.ID) (snowflake.ID, bool) { return 0, false },
 		closeClient: func(context.Context) {},
 	})
 	// a steady feed so the stream has audio to send
@@ -258,4 +270,54 @@ func TestFollowWaitsForTheLeaveToLandBeforeJoining(t *testing.T) {
 	if order != "create left create" {
 		t.Fatalf("order = %q; Discord must see the leave before the new join or it closes the new connection", order)
 	}
+}
+
+func TestCommandsAreRegisteredPerGuildOnlyWhenEnabled(t *testing.T) {
+	h := newHarness(t)
+	h.b.cfg.Commands = false
+	_ = h.b.Toggle(context.Background())
+	if len(h.registered) != 0 {
+		t.Fatalf("registered %v with commands off", h.registered)
+	}
+	h2 := newHarness(t)
+	h2.b.cfg.Commands = true
+	_ = h2.b.Toggle(context.Background())
+	_ = h2.b.Toggle(context.Background()) // leave
+	_ = h2.b.Toggle(context.Background()) // a second join must not register again
+	if fmt.Sprint(h2.registered) != "[1 2]" {
+		t.Fatalf("registered %v", h2.registered)
+	}
+}
+
+func TestTrackEndIsLoggedOnlyWhileLiveAndSavedAsANight(t *testing.T) {
+	h := newHarness(t)
+	dir := t.TempDir()
+	var saved []string
+	h.b.cfg.History = history.NewWriter(dir)
+	h.b.cfg.SaveNights = true
+	h.b.cfg.SaveNight = func(_ context.Context, name string, ts []library.Track) (string, error) {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		saved = append(saved, fmt.Sprintf("%s:%d", name, len(ts)))
+		return "Saved " + name, nil
+	}
+	h.b.TrackEnded(library.Track{ID: "x"}, time.Minute, "", "") // not live: ignored
+	if err := h.b.Toggle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "stream", func() bool { return h.b.streams.Load() == 1 })
+	h.b.TrackEnded(library.Track{ID: "s:1", Title: "Heavy", Duration: 248 * time.Second}, 248*time.Second, "u1", "Alice")
+	_ = h.b.Toggle(context.Background()) // leave
+	es, err := history.Read(dir, "1")
+	if err != nil || len(es) != 1 || es[0].Name != "Alice" || es[0].Channel != "chan-10" || es[0].Played != 248 {
+		t.Fatalf("history = %+v %v", es, err)
+	}
+	waitFor(t, "save", func() bool { h.mu.Lock(); defer h.mu.Unlock(); return len(saved) == 1 })
+	h.mu.Lock()
+	got := saved[0]
+	h.mu.Unlock()
+	if !strings.HasPrefix(got, "Discord chan-10 ") || !strings.HasSuffix(got, ":1") {
+		t.Fatalf("saved = %v", got)
+	}
+	waitFor(t, "notice", func() bool { return strings.Contains(h.lastNotice(), "Saved Discord chan-10") })
 }
