@@ -24,7 +24,7 @@ With Go:
 
     go install github.com/brady1408/dotamp/cmd/dotamp@latest
 
-Or take a prebuilt binary from the [releases](https://github.com/brady1408/dotamp/releases). Those are unsigned for now: macOS wants a right-click → Open on first launch, Windows SmartScreen wants "More info → Run anyway".
+Or take a prebuilt binary from the [releases](https://github.com/brady1408/dotamp/releases). Those are unsigned for now: macOS wants a right-click → Open on first launch; on Windows, Chrome may flag the download (choose "Keep" in the downloads panel) and SmartScreen wants "More info → Run anyway" on first run. A fresh unsigned Go binary trips those heuristics; `go install` sidesteps both because the build is local.
 
 ## First run
 

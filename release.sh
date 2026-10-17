@@ -11,10 +11,14 @@ go vet ./... && go test ./... >/dev/null
 export GH_TOKEN; GH_TOKEN=$(gh auth token -u brady1408)
 git tag -a "$V" -m "dotamp $V" && git push -q origin "$V"
 rm -rf dist && mkdir -p dist
+# Windows version resource (product name, version, description): unsigned
+# binaries without one look like "unknown application" to SmartScreen.
+go run github.com/tc-hib/go-winres@v0.3.3 make --in cmd/dotamp/winres/winres.json --out cmd/dotamp/rsrc --product-version "${V#v}" --file-version "${V#v}" --arch amd64
 for t in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64; do
   os=${t%/*}; arch=${t#*/}; ext=""; [ "$os" = windows ] && ext=".exe"
   CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -ldflags "-s -w -X main.version=$V" -o "dist/dotamp-$os-$arch$ext" ./cmd/dotamp
 done
+rm -f cmd/dotamp/rsrc_windows_*.syso
 ( cd dist && for f in dotamp-*; do case "$f" in *.exe) zip -q "${f%.exe}.zip" "$f" && rm "$f";; *) tar -czf "$f.tar.gz" "$f" && rm "$f";; esac; done && sha256sum -- * > SHA256SUMS )
 gh release create "$V" dist/* --title "dotamp $V" --notes "$NOTES" >/dev/null
 echo "released https://github.com/brady1408/dotamp/releases/tag/$V"
