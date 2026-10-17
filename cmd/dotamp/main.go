@@ -418,6 +418,45 @@ func connectOthers(ctx context.Context, cfg config.Config, primaryID string, rel
 	wg.Wait()
 }
 
+// fallbackMusicServer tries the account's servers other than primaryID, in
+// plex.tv order, and returns a client for the first that has a music
+// library, remembering it as the last connection that worked. When none
+// has music the error names the servers that were checked.
+func fallbackMusicServer(ctx context.Context, cfg *config.Config, primaryID string, relayCap int) (*plex.Client, multi.Server, error) {
+	servers, err := plexTV(cfg.ClientID).Servers(ctx, cfg.AccountToken)
+	if err != nil {
+		return nil, multi.Server{}, err
+	}
+	var tried []string
+	for _, srv := range servers {
+		if srv.ID == primaryID {
+			continue
+		}
+		tried = append(tried, srv.Name)
+		cn, err := plextv.Connect(ctx, srv, plextv.Probe(srv.AccessToken, cfg.ClientID))
+		if err != nil {
+			log.Printf("server %s: %v", srv.Name, err)
+			continue
+		}
+		c := plex.New(cn.URI, srv.AccessToken, cfg.ClientID)
+		c.SetServer(srv.ID, srv.Name)
+		c.SetConnection(cn.Local, cn.Relay, relayCap)
+		c.SetRemoteBitrate(cfg.RemoteBitrate)
+		id, err := c.MusicSection(ctx)
+		if err != nil {
+			log.Printf("server %s: %v", srv.Name, err)
+			continue
+		}
+		cfg.Section, cfg.LastServer, cfg.LastToken, cfg.LastServerID = id, cn.URI, srv.AccessToken, srv.ID
+		_ = config.Save(*cfg)
+		return c, multi.Server{ID: srv.ID, Name: srv.Name, Owned: srv.Owned, Via: strings.Trim(where(cn), " ()")}, nil
+	}
+	if len(tried) == 0 {
+		return nil, multi.Server{}, errors.New("plex: your server has no music library and the account has no other servers")
+	}
+	return nil, multi.Server{}, fmt.Errorf("plex: no music library on any of your servers (checked %s)", strings.Join(tried, ", "))
+}
+
 // resolveServer returns the server URL and token to use: the manual pair when
 // set, otherwise the account's server through the best connection, falling
 // back to the last connection that worked when plex.tv cannot be reached.
@@ -515,17 +554,27 @@ func run(debugLog, silent bool) (err error) {
 		primary.SetServer(cn.ServerID, serverName)
 		primary.SetConnection(cn.Local || !cn.Discovered, cn.Relay, relayCap)
 		primary.SetRemoteBitrate(cfg.RemoteBitrate)
+		primaryServer := multi.Server{ID: cn.ServerID, Name: serverName, Owned: true, Via: strings.Trim(where(cn), " ()")}
 		if cfg.Section != "" {
 			primary.SetSection(cfg.Section)
-		} else {
-			id, err := primary.MusicSection(ctx)
-			if err != nil {
-				return fmt.Errorf("plex at %s: %w", serverURL, err)
-			}
+		} else if id, err := primary.MusicSection(ctx); err == nil {
 			cfg.Section = id
 			_ = config.Save(cfg)
+		} else if cfg.Manual() || cfg.ServerName != "" {
+			return fmt.Errorf("plex at %s: %w", serverURL, err)
+		} else {
+			// The account's first-choice server has no music. A friend's
+			// shared server often does: take the first one that answers
+			// with a music library.
+			log.Printf("server %s: %v; looking for one with music", serverName, err)
+			other, srv, ferr := fallbackMusicServer(ctx, &cfg, cn.ServerID, relayCap)
+			if ferr != nil {
+				return ferr
+			}
+			primary, primaryServer, cn.ServerID = other, srv, srv.ID
+			log.Printf("server: %s (has the music)", srv.Name)
 		}
-		lib.Add(multi.Server{ID: cn.ServerID, Name: serverName, Owned: true, Via: strings.Trim(where(cn), " ()")}, primary)
+		lib.Add(primaryServer, primary)
 		if !cfg.Manual() {
 			go connectOthers(ctx, cfg, cn.ServerID, relayCap, lib)
 		}

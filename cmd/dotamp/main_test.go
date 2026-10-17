@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/brady1408/dotamp/internal/config"
 )
 
 func build(t *testing.T) string {
@@ -54,13 +57,27 @@ func fakePlex(t *testing.T) *httptest.Server {
 		_ = json.NewEncoder(w).Encode([]map[string]any{{
 			"name": "testbox", "provides": "server", "clientIdentifier": "tb", "owned": true, "accessToken": "srv-token",
 			"connections": []map[string]any{{"uri": s.URL, "local": true, "relay": false}},
+		}, {
+			"name": "musicbox", "provides": "server", "clientIdentifier": "mb", "owned": false, "accessToken": "music-token",
+			"connections": []map[string]any{{"uri": s.URL, "local": true, "relay": false}},
 		}})
+	})
+	// The same fake answers for both servers; the token says which one.
+	mux.HandleFunc("GET /library/sections", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("X-Plex-Token") {
+		case "srv-token": // testbox: video only
+			_, _ = w.Write([]byte(`{"MediaContainer":{"Directory":[{"key":"1","type":"movie","title":"Movies"}]}}`))
+		case "music-token": // musicbox: has music
+			_, _ = w.Write([]byte(`{"MediaContainer":{"Directory":[{"key":"7","type":"artist","title":"Music"}]}}`))
+		default:
+			http.Error(w, "unauthorized", 401)
+		}
 	})
 	mux.HandleFunc("GET /api/v2/user", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"username":"tester","subscription":{"active":false}}`))
 	})
 	mux.HandleFunc("GET /identity", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Plex-Token") != "srv-token" {
+		if tok := r.Header.Get("X-Plex-Token"); tok != "srv-token" && tok != "music-token" {
 			http.Error(w, "unauthorized", 401)
 			return
 		}
@@ -225,5 +242,24 @@ func TestFirstRunDecliningEverythingExplains(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "dotamp login") {
 		t.Fatalf("expected a non-zero exit with the commands named:\n%s", out)
+	}
+}
+
+func TestFallsBackToAServerThatHasMusic(t *testing.T) {
+	plex := fakePlex(t)
+	t.Setenv("DOTAMP_PLEXTV", plex.URL)
+	cfg := &config.Config{AccountToken: "acct-token", ClientID: "cid"}
+	c, srv, err := fallbackMusicServer(context.Background(), cfg, "tb", 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if srv.ID != "mb" || srv.Name != "musicbox" || srv.Owned {
+		t.Fatalf("server = %+v", srv)
+	}
+	if c == nil || cfg.Section != "7" || cfg.LastToken != "music-token" || cfg.LastServerID != "mb" {
+		t.Fatalf("client=%v section=%q lastToken=%q lastID=%q", c != nil, cfg.Section, cfg.LastToken, cfg.LastServerID)
+	}
+	if _, _, err := fallbackMusicServer(context.Background(), cfg, "mb", 1000); err == nil || !strings.Contains(err.Error(), "testbox") {
+		t.Fatalf("with only video servers left the error names them: %v", err)
 	}
 }
