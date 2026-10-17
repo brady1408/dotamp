@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brady1408/dotamp/internal/audio"
 	"github.com/brady1408/dotamp/internal/library"
 )
 
@@ -62,8 +63,31 @@ func TestListScrollKeepsSelectionVisible(t *testing.T) {
 }
 
 func TestQueueRowsMarksPlaying(t *testing.T) {
-	rs := QueueRows([]library.Track{{Title: "A", Duration: 61 * time.Second}, {Title: "B"}}, 1)
+	rs := QueueRows([]library.Track{{Title: "A", Duration: 61 * time.Second}, {Title: "B"}}, 1, nil)
 	if rs[0].Playing || !rs[1].Playing || rs[0].Right != "1:01" || !strings.HasPrefix(rs[0].Text, "1.") {
 		t.Fatalf("rows = %+v", rs)
+	}
+}
+
+func TestQueueRowsShowWhoAsked(t *testing.T) {
+	ts := []library.Track{{Title: "A", Artist: "X", Duration: time.Minute}, {Title: "B", Artist: "Y", Duration: time.Minute}}
+	rows := QueueRows(ts, 0, func(i int) string {
+		if i == 1 {
+			return "Alice"
+		}
+		return ""
+	})
+	if rows[0].Right != "1:00" || rows[1].Right != "Alice · 1:00" {
+		t.Fatalf("rights = %q %q", rows[0].Right, rows[1].Right)
+	}
+}
+
+func TestRequestRowsListLanes(t *testing.T) {
+	rows := RequestRows([]audio.Lane{{Name: "Alice", Tracks: []library.Track{{Title: "Heavy"}, {Title: "Shine"}}}, {Name: "Bob"}})
+	if len(rows) != 2 || !rows[0].Header || rows[0].Text != "Requests" || rows[1].Text != "Alice (2 waiting): Heavy" {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if RequestRows(nil) != nil {
+		t.Fatal("rows for no lanes")
 	}
 }

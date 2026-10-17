@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/brady1408/dotamp/internal/history"
 	"github.com/brady1408/dotamp/internal/library"
 	"github.com/brady1408/dotamp/internal/multi"
 )
@@ -16,6 +17,7 @@ const (
 	MenuRecent    = "recent"
 	MenuPlaylists = "playlists"
 	MenuServers   = "servers"
+	MenuNights    = "nights"
 
 	artistPage = 200 // artists fetched per request while scrolling the index
 )
@@ -32,9 +34,10 @@ type Switcher interface {
 // The root is a small menu; Artists is an index of every artist that loads a
 // page at a time as the selection moves.
 type Browser struct {
-	lib   library.Library
-	sw    Switcher // nil when there is a single, unnamed server
-	stack []view
+	lib    library.Library
+	sw     Switcher // nil when there is a single, unnamed server
+	nights Nights   // nil until Discord commands are on
+	stack  []view
 
 	// Album rows carry a quality tag taken from the album's first track.
 	// Servers only report format per track, so tags are fetched in the
@@ -218,6 +221,11 @@ func (b *Browser) LoadRoot(context.Context) error {
 		{Text: "Artists", Menu: MenuArtists},
 		{Text: "Recently added", Menu: MenuRecent},
 		{Text: "Playlists", Menu: MenuPlaylists},
+	}
+	if b.nights != nil {
+		if ns, _ := b.nights.Nights(); len(ns) > 0 {
+			rows = append(rows, Row{Text: "Nights", Menu: MenuNights})
+		}
 	}
 	if b.sw != nil && len(b.sw.Servers()) > 1 {
 		rows = append(rows, Row{Text: "Servers", Menu: MenuServers})
@@ -568,6 +576,61 @@ func (b *Browser) playlistRows(ps []library.Playlist) []Row {
 }
 
 // OpenPlaylists pushes the list of every server's playlists.
+// Nights is the Discord play history as the Library shows it.
+type Nights interface {
+	Nights() ([]history.Night, error)
+	GuildName(id string) string
+	Night(ctx context.Context, guild string) (name string, tracks []library.Track, skipped int, err error)
+}
+
+func (b *Browser) SetNights(n Nights) { b.nights = n }
+
+// OpenNights lists the servers with history, newest first.
+func (b *Browser) OpenNights(ctx context.Context) error {
+	ns, err := b.nights.Nights()
+	if err != nil {
+		return err
+	}
+	var rows []Row
+	for _, n := range ns {
+		word := "nights"
+		if n.Nights == 1 {
+			word = "night"
+		}
+		rows = append(rows, Row{Text: fmt.Sprintf("%s (%d %s)", b.nights.GuildName(n.Guild), n.Nights, word), Night: n.Guild})
+	}
+	if len(rows) == 0 {
+		rows = []Row{{Text: "No nights yet", Header: true}}
+	}
+	var l List
+	l.SetRows(rows)
+	b.push(view{title: "Nights", list: l})
+	return nil
+}
+
+// OpenNight shows a server's most-played tracks as a playable list.
+func (b *Browser) OpenNight(ctx context.Context, guild string) error {
+	name, ts, skipped, err := b.nights.Night(ctx, guild)
+	if err != nil {
+		return err
+	}
+	var rows []Row
+	if skipped > 0 {
+		rows = append(rows, Row{Text: fmt.Sprintf("Skipped %d from unreachable servers", skipped), Header: true})
+	}
+	for i := range ts {
+		t := &ts[i]
+		rows = append(rows, Row{Text: fmt.Sprintf("%2d. %s — %s", i+1, t.Artist, t.Title), Right: Clock(t.Duration), Track: t})
+	}
+	if ts == nil {
+		ts = []library.Track{}
+	}
+	var l List
+	l.SetRows(rows)
+	b.push(view{title: "Night: " + name, list: l, tracks: ts})
+	return nil
+}
+
 func (b *Browser) OpenPlaylists(ctx context.Context) error {
 	ps, err := b.lib.Playlists(ctx)
 	if err != nil {

@@ -92,6 +92,12 @@ func (a *App) SetBroadcaster(b Broadcaster) { a.cast = b }
 // SetSaver enables w, saving the queue as a playlist.
 func (a *App) SetSaver(s Saver) { a.saver = s }
 
+// SetNights enables the Library's Nights menu over the Discord play history.
+func (a *App) SetNights(n Nights) {
+	a.browser.SetNights(n)
+	_ = a.browser.LoadRoot(context.Background())
+}
+
 // SetSwitcher enables the Servers menu for a multi-server library.
 func (a *App) SetSwitcher(sw Switcher) {
 	a.browser.SetSwitcher(sw)
@@ -303,9 +309,13 @@ func (a *App) key(ev *tcell.EventKey) bool {
 			a.browser.Home(ctx)
 		}
 	case ActClear:
-		a.ctrl.Clear()
+		n := a.ctrl.Clear()
 		a.queue.Sel = 0
-		a.setNotice("Queue cleared")
+		if n > 0 {
+			a.setNotice(fmt.Sprintf("Queue cleared (and %d requests)", n))
+		} else {
+			a.setNotice("Queue cleared")
+		}
 	case ActMoveUp:
 		a.editPlaylist(ctx, -1, false)
 	case ActMoveDown:
@@ -502,6 +512,10 @@ func (a *App) activate(ctx context.Context, row *Row, appendOnly bool) {
 		a.run(a.browser.OpenServers(ctx))
 	case row.Menu == MenuPlaylists:
 		a.run(a.browser.OpenPlaylists(ctx))
+	case row.Menu == MenuNights:
+		a.run(a.browser.OpenNights(ctx))
+	case row.Night != "":
+		a.run(a.browser.OpenNight(ctx, row.Night))
 	case row.ServerID != "":
 		if a.browser.SwitchServer(ctx, row.ServerID) {
 			a.setNotice("Browsing " + a.browser.CurrentServerName())
@@ -660,7 +674,10 @@ func (a *App) Draw() {
 		body = Rect{body.X, body.Y + 1, body.W, body.H - 1}
 	}
 	if a.tab == tabQueue {
-		a.queue.Rows = QueueRows(a.ctrl.Tracks(), a.ctrl.Index())
+		a.queue.Rows = append(QueueRows(a.ctrl.Tracks(), a.ctrl.Index(), func(i int) string {
+			_, name := a.ctrl.RequesterOf(i)
+			return name
+		}), RequestRows(a.ctrl.Pending())...)
 		if a.queue.Sel < 0 || a.queue.Sel >= len(a.queue.Rows) {
 			a.queue.Sel = a.ctrl.Index()
 		}

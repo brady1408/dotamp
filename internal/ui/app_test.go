@@ -16,6 +16,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 
 	"github.com/brady1408/dotamp/internal/audio"
+	"github.com/brady1408/dotamp/internal/history"
 	"github.com/brady1408/dotamp/internal/library"
 )
 
@@ -895,4 +896,58 @@ func TestBroadcastKeyIgnoresASecondPressWhileJoining(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	close(fc.block)
 	waitFor(t, func() bool { fc.mu.Lock(); defer fc.mu.Unlock(); return fc.toggles == 1 && fc.live == "a-team" })
+}
+
+func TestClearNoticeCountsRequests(t *testing.T) {
+	app, s, _ := newApp(t)
+	app.ctrl.Enqueue(library.Track{ID: "300", Title: "Bye Bye Bye"})
+	_ = app.ctrl.Jump(context.Background(), 0)
+	app.ctrl.Request(context.Background(), "u1", "Alice", []library.Track{{ID: "301"}, {ID: "301"}})
+	key(app, tcell.KeyRune, 'c')
+	app.Draw()
+	if r := rows(s); !strings.Contains(strings.Join(r, "\n"), "Queue cleared (and 2 requests)") {
+		t.Fatalf("notice missing:\n%s", strings.Join(r, "\n"))
+	}
+}
+
+type fakeNights struct{}
+
+func (fakeNights) Nights() ([]history.Night, error) {
+	return []history.Night{{Guild: "g1", Nights: 3}}, nil
+}
+func (fakeNights) GuildName(string) string { return "Kicarus" }
+func (fakeNights) Night(context.Context, string) (string, []library.Track, int, error) {
+	return "Kicarus", []library.Track{{ID: "300", Title: "Bye Bye Bye", Artist: "*NSYNC"}}, 2, nil
+}
+
+func TestNightsMenuAppearsAndBuildsAQueue(t *testing.T) {
+	app, s, lib := newApp(t)
+	key(app, tcell.KeyTab, 0)
+	app.Draw()
+	if strings.Contains(strings.Join(rows(s), "\n"), "Nights") {
+		t.Fatal("Nights shown without history")
+	}
+	app.SetNights(fakeNights{})
+	app.Draw()
+	r := strings.Join(rows(s), "\n")
+	if !strings.Contains(r, "Nights") {
+		t.Fatalf("Nights missing:\n%s", r)
+	}
+	for i := 0; i < 3; i++ { // Artists, Recently added, Playlists, Nights
+		key(app, tcell.KeyDown, 0)
+	}
+	key(app, tcell.KeyEnter, 0) // guild list
+	app.Draw()
+	if r := strings.Join(rows(s), "\n"); !strings.Contains(r, "Kicarus (3 nights)") {
+		t.Fatalf("guild row missing:\n%s", r)
+	}
+	key(app, tcell.KeyEnter, 0) // the night view
+	app.Draw()
+	if r := strings.Join(rows(s), "\n"); !strings.Contains(r, "Skipped 2") || !strings.Contains(r, "Bye Bye Bye") {
+		t.Fatalf("night view:\n%s", r)
+	}
+	key(app, tcell.KeyEnter, 0) // play from the top
+	if len(lib.played) != 1 || lib.played[0] != "300" {
+		t.Fatalf("played = %v", lib.played)
+	}
 }

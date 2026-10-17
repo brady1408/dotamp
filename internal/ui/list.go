@@ -6,6 +6,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/uniseg"
 
+	"github.com/brady1408/dotamp/internal/audio"
 	"github.com/brady1408/dotamp/internal/library"
 )
 
@@ -18,6 +19,7 @@ type Row struct {
 	Track       *library.Track
 	Artist      *library.Artist
 	Playlist    *library.Playlist
+	Night       string // guild ID of a row in the Nights menu
 	Playing     bool
 	tagged      bool // the album's quality tag has been applied to Right
 }
@@ -117,7 +119,9 @@ func (l *List) RowAt(r Rect, y int) int {
 	return i
 }
 
-func QueueRows(ts []library.Track, playing int) []Row {
+// QueueRows lists the queue; name, when given, is who asked for row i and
+// shows before the duration.
+func QueueRows(ts []library.Track, playing int, name func(i int) string) []Row {
 	rows := make([]Row, len(ts))
 	for i := range ts {
 		t := &ts[i]
@@ -130,6 +134,27 @@ func QueueRows(ts []library.Track, playing int) []Row {
 		if t.Artist == "" {
 			rows[i].Text = fmt.Sprintf("%d. %s", i+1, t.Title)
 		}
+		if name != nil {
+			if n := name(i); n != "" {
+				rows[i].Right = n + " · " + rows[i].Right
+			}
+		}
+	}
+	return rows
+}
+
+// RequestRows is the read-only Requests section under the queue: who is
+// waiting, how many songs, and their next one. Nil when nobody is waiting.
+func RequestRows(lanes []audio.Lane) []Row {
+	var rows []Row
+	for _, l := range lanes {
+		if len(l.Tracks) == 0 {
+			continue
+		}
+		if rows == nil {
+			rows = []Row{{Text: "Requests", Header: true}}
+		}
+		rows = append(rows, Row{Text: fmt.Sprintf("%s (%d waiting): %s", l.Name, len(l.Tracks), l.Tracks[0].Title), Header: true})
 	}
 	return rows
 }
