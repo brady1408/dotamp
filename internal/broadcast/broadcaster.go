@@ -47,6 +47,7 @@ type deps struct {
 	name        func(Location) string
 	createConn  func(guild snowflake.ID) voice.Conn
 	removeConn  func(guild snowflake.ID)
+	awaitLeft   func(ctx context.Context, guild snowflake.ID) // Discord has seen us leave the guild's voice
 	closeClient func(ctx context.Context)
 }
 
@@ -83,6 +84,7 @@ func New(cfg Config) *Broadcaster {
 		name:       b.channelName,
 		createConn: func(g snowflake.ID) voice.Conn { return b.client.VoiceManager.CreateConn(g) },
 		removeConn: func(g snowflake.ID) { b.client.VoiceManager.RemoveConn(g) },
+		awaitLeft:  b.awaitLeft,
 		closeClient: func(ctx context.Context) {
 			if b.client != nil {
 				b.client.Close(ctx)
@@ -168,6 +170,33 @@ func (b *Broadcaster) connectDiscord(ctx context.Context) error {
 }
 
 // states adapts disgo's cache to Find.
+// awaitLeft waits until the cache no longer shows the bot in voice on the
+// guild. A leave followed at once by a join races Discord's reply to the
+// leave: that reply reaches the new connection, which disgo reads as "we
+// were disconnected" and tears the new connection down mid-handshake.
+func (b *Broadcaster) awaitLeft(ctx context.Context, guild snowflake.ID) {
+	if b.client == nil {
+		return
+	}
+	self := b.client.ID()
+	if u, ok := b.client.Caches.SelfUser(); ok {
+		self = u.ID
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	for {
+		if vs, ok := b.client.Caches.VoiceState(guild, self); !ok || vs.ChannelID == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	time.Sleep(100 * time.Millisecond) // the voice manager handles the same event; let it pass
+}
+
 type states struct{ c *bot.Client }
 
 func (s states) Each(fn func(guild, channel, user snowflake.ID) bool) {
@@ -303,69 +332,85 @@ func (b *Broadcaster) stream(s *session) {
 		go b.leave(context.Background(), s)
 		return
 	}
+	slice := b.cfg.Rate / 50 // frames per 20 ms
+	src := newFeeder(b.cfg.Feed, slice)
 	// The feed holds the last two seconds whether or not anyone listens;
 	// start live, not with a backlog that would play out as a rush.
-	slice := b.cfg.Rate / 50 // frames per 20 ms
-	chunk := make([]float32, 2*slice*2)
-	for b.cfg.Feed.Read(chunk) > 0 {
+	for b.cfg.Feed.Read(src.buf) > 0 {
 	}
 	var sp Speaker
-	tick := time.NewTicker(20 * time.Millisecond)
-	defer tick.Stop()
 	var pending [][]byte
+	now := time.Now()
+	pacer := NewPacer(now)
+	st := newStats(now)
+	last := now
+	// A fine tick with a wall-clock pacer: a tick that lands late sends the
+	// slots it owes, so timer jitter never opens a hole in the stream.
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
 	for {
 		select {
 		case <-s.stop:
 			return
 		case <-tick.C:
 		}
-		// One slice per tick; two when a lag of over 200 ms has built up,
-		// so the stream creeps back to live instead of jumping.
-		want := slice
-		if b.cfg.Feed.Available() > slice*10 {
-			want = 2 * slice
-		}
-		if n := b.cfg.Feed.Read(chunk[:2*want]); n > 0 {
-			pipe.Push(chunk[:2*n])
-		}
-		pending = append(pending, pipe.Packets()...)
-		var pkt []byte
-		switch sp.Tick(len(pending) > 0) {
-		case SendAudio:
-			pkt, pending = pending[0], pending[1:]
-		case SendSilence:
-			pkt = Silence
-		default:
-			continue
-		}
-		if _, err := s.conn.UDP().Write(pkt); err != nil {
-			select {
-			case <-s.stop: // we are being torn down; the error is ours
-				return
+		now = time.Now()
+		st.gap(now.Sub(last))
+		last = now
+		for range pacer.Due(now) {
+			if frames := src.take(); frames != nil {
+				pipe.Push(frames)
+			}
+			pending = append(pending, pipe.Packets()...)
+			var pkt []byte
+			sent := false
+			switch sp.Tick(len(pending) > 0) {
+			case SendAudio:
+				pkt, pending = pending[0], pending[1:]
+				sent = true
+			case SendSilence:
+				pkt = Silence
 			default:
+				st.slot(false, 0)
+				continue
 			}
-			b.cfg.Logger.Warn("broadcast write", "err", err)
-			if s.retry {
-				b.cfg.Notify("Broadcast dropped: " + err.Error())
-				go b.leave(context.Background(), s)
+			t0 := time.Now()
+			_, err := s.conn.UDP().Write(pkt)
+			st.slot(sent, time.Since(t0))
+			if err != nil {
+				select {
+				case <-s.stop: // we are being torn down; the error is ours
+					return
+				default:
+				}
+				b.cfg.Logger.Warn("broadcast write", "err", err)
+				if s.retry {
+					b.cfg.Notify("Broadcast dropped: " + err.Error())
+					go b.leave(context.Background(), s)
+					return
+				}
+				go b.reopen(s, err)
 				return
 			}
-			go b.reopen(s, err)
-			return
+			if len(pending) > 10 { // the resampler yields one packet per slice; this is a bug guard
+				st.trimmed += len(pending) - 10
+				pending = pending[len(pending)-10:]
+			}
 		}
-		if len(pending) > 5 { // a tenth of a second behind: drop to stay live
-			pending = pending[len(pending)-5:]
+		st.depth(b.cfg.Feed.Available())
+		if st.due(now) {
+			b.cfg.Logger.Info("broadcast", "channel", s.name, "stats", st.line(), "skipped", src.dropped)
+			st.reset(now)
 		}
 	}
 }
 
-// reopen is the one retry after a dropped connection: leave, wait, join
-// the same channel again; a second failure ends the broadcast.
 func (b *Broadcaster) reopen(s *session, cause error) {
 	defer b.guard("reopen")
 	ctx, cancel := context.WithTimeout(context.Background(), joinTimeout)
 	defer cancel()
 	b.leave(ctx, s)
+	b.deps.awaitLeft(ctx, s.loc.Guild)
 	time.Sleep(retryDelay)
 	if !b.claim() {
 		b.cfg.Notify("Broadcast dropped: " + cause.Error())
@@ -414,6 +459,7 @@ func (b *Broadcaster) onVoiceState(e *events.GuildVoiceStateUpdate) {
 			b.cfg.Notify("You left " + cur.name + "; broadcast ended")
 		case *channel != cur.loc.Channel || guild != cur.loc.Guild:
 			b.leave(ctx, cur)
+			b.deps.awaitLeft(ctx, cur.loc.Guild)
 			if err := b.join(ctx, Location{guild, *channel}); err != nil {
 				b.cfg.Logger.Warn("broadcast follow", "err", err)
 				b.cfg.Notify(err.Error())

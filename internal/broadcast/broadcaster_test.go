@@ -79,6 +79,7 @@ type harness struct {
 	openWait bool
 	udpErr   error
 	panicAt  int
+	order    []string // "create" and "left" in the order the broadcaster asked
 }
 
 func newHarness(t *testing.T) *harness {
@@ -103,9 +104,11 @@ func newHarness(t *testing.T) *harness {
 			defer h.mu.Unlock()
 			c := &fakeConn{guild: g, udp: &fakeUDP{err: h.udpErr, panicAt: h.panicAt}, openWait: h.openWait}
 			h.conns = append(h.conns, c)
+			h.order = append(h.order, "create")
 			return c
 		},
 		removeConn:  func(snowflake.ID) { h.mu.Lock(); h.removed++; h.mu.Unlock() },
+		awaitLeft:   func(context.Context, snowflake.ID) { h.mu.Lock(); h.order = append(h.order, "left"); h.mu.Unlock() },
 		closeClient: func(context.Context) {},
 	})
 	// a steady feed so the stream has audio to send
@@ -238,4 +241,21 @@ func TestWriteErrorRetriesOnceThenDrops(t *testing.T) {
 
 func voiceState(guild snowflake.ID, ch *snowflake.ID, user snowflake.ID) discord.VoiceState {
 	return discord.VoiceState{GuildID: guild, ChannelID: ch, UserID: user}
+}
+
+func TestFollowWaitsForTheLeaveToLandBeforeJoining(t *testing.T) {
+	h := newHarness(t)
+	if err := h.b.Toggle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "stream", func() bool { return h.b.streams.Load() == 1 })
+	ch := snowflake.ID(20)
+	h.b.onVoiceState(&events.GuildVoiceStateUpdate{GenericGuildVoiceState: &events.GenericGuildVoiceState{VoiceState: voiceState(1, &ch, 100)}})
+	waitFor(t, "follow", func() bool { return h.b.Channel() == "chan-20" })
+	h.mu.Lock()
+	order := strings.Join(h.order, " ")
+	h.mu.Unlock()
+	if order != "create left create" {
+		t.Fatalf("order = %q; Discord must see the leave before the new join or it closes the new connection", order)
+	}
 }
