@@ -143,15 +143,30 @@ func cut(s string, n int) string {
 	return s[:n-1] + "…"
 }
 
-func (b *Broadcaster) command(ctx context.Context, c command) reply {
+// precheck answers what can be refused from cached state alone, before
+// any library round trip: not live, the asker elsewhere, an expired choice.
+// The adapter uses it to keep those refusals ephemeral.
+func (b *Broadcaster) precheck(c command) (reply, bool) {
 	b.mu.Lock()
 	cur := b.cur
 	b.mu.Unlock()
 	if cur == nil {
-		return reply{Text: "dotamp isn't broadcasting right now"}
+		return reply{Text: "dotamp isn't broadcasting right now"}, true
 	}
 	if c.Guild != cur.loc.Guild || c.Voice != cur.loc.Channel {
-		return reply{Text: "Join " + cur.name + " to request songs"}
+		return reply{Text: "Join " + cur.name + " to request songs"}, true
+	}
+	if c.Name == "play" && strings.HasPrefix(c.What, "t:") {
+		if ch, ok := b.recall(c.What); !ok || ch.track == nil {
+			return reply{Text: "That choice expired; search again"}, true
+		}
+	}
+	return reply{}, false
+}
+
+func (b *Broadcaster) command(ctx context.Context, c command) reply {
+	if r, refused := b.precheck(c); refused {
+		return r
 	}
 	switch c.Name {
 	case "play":

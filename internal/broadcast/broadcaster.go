@@ -284,8 +284,8 @@ func (b *Broadcaster) Toggle(ctx context.Context) error {
 	cur := b.cur
 	b.mu.Unlock()
 	if cur != nil {
+		b.cfg.Notify("Left " + cur.name) // before leave, so a night's save notice is what stays
 		b.leave(ctx, cur)
-		b.cfg.Notify("Left " + cur.name)
 		return nil
 	}
 	if err := b.deps.connect(ctx); err != nil {
@@ -334,6 +334,13 @@ func (b *Broadcaster) leave(ctx context.Context, s *session) {
 		b.mu.Unlock()
 		return
 	}
+	// The song playing as we leave was heard by the room too.
+	if b.cfg.Player != nil {
+		if t, pos, name, ok := b.cfg.Player.Current(); ok {
+			s.night = append(s.night, t)
+			b.log(s, t, pos, "", name)
+		}
+	}
 	b.cur = nil
 	b.mu.Unlock()
 	close(s.stop)
@@ -341,17 +348,27 @@ func (b *Broadcaster) leave(ctx context.Context, s *session) {
 	b.deps.removeConn(s.loc.Guild)
 	b.cfg.Mute(false)
 	if b.cfg.SaveNights && b.cfg.SaveNight != nil && len(s.night) > 0 {
+		// Synchronous, so a save on quit finishes before the process does;
+		// every caller of leave is on its own goroutine, not the UI's.
 		name := "Discord " + s.name + " " + time.Now().Format("2006-01-02")
-		go func() {
-			defer b.guard("save night")
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			msg, err := b.cfg.SaveNight(ctx, name, s.night)
-			if err != nil && msg == "" {
-				msg = "Save failed: " + err.Error()
-			}
-			b.cfg.Notify(msg)
-		}()
+		sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		msg, err := b.cfg.SaveNight(sctx, name, s.night)
+		if err != nil && msg == "" {
+			msg = "Save failed: " + err.Error()
+		}
+		b.cfg.Notify(msg)
+	}
+}
+
+// log appends one history line for the session's server.
+func (b *Broadcaster) log(s *session, t library.Track, played time.Duration, by, name string) {
+	if b.cfg.History == nil {
+		return
+	}
+	e := history.Entry{At: time.Now().UTC(), Channel: s.name, By: by, Name: name, Played: played.Seconds(), Track: t}
+	if err := b.cfg.History.Append(s.loc.Guild.String(), e); err != nil {
+		b.cfg.Logger.Warn("history", "err", err)
 	}
 }
 
@@ -387,12 +404,8 @@ func (b *Broadcaster) TrackEnded(t library.Track, played time.Duration, by, name
 		cur.night = append(cur.night, t)
 	}
 	b.mu.Unlock()
-	if cur == nil || b.cfg.History == nil {
-		return
-	}
-	e := history.Entry{At: time.Now().UTC(), Channel: cur.name, By: by, Name: name, Played: played.Seconds(), Track: t}
-	if err := b.cfg.History.Append(cur.loc.Guild.String(), e); err != nil {
-		b.cfg.Logger.Warn("history", "err", err)
+	if cur != nil {
+		b.log(cur, t, played, by, name)
 	}
 }
 
@@ -570,8 +583,8 @@ func (b *Broadcaster) onVoiceState(e *events.GuildVoiceStateUpdate) {
 		case channel == nil && guild != cur.loc.Guild:
 			// leaving voice on another server says nothing about this one
 		case channel == nil:
-			b.leave(ctx, cur)
 			b.cfg.Notify("You left " + cur.name + "; broadcast ended")
+			b.leave(ctx, cur)
 		case *channel != cur.loc.Channel || guild != cur.loc.Guild:
 			b.leave(ctx, cur)
 			b.deps.awaitLeft(ctx, cur.loc.Guild)

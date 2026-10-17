@@ -31,6 +31,7 @@ type Controller struct {
 	retried   string        // track ID whose stream was already reopened once
 	curBy     string        // who asked for the current track; "" for the DJ
 	curName   string
+	reported  bool // the current track's end has been reported
 	onEnd     func(t library.Track, played time.Duration, by, name string)
 }
 
@@ -55,7 +56,7 @@ func (c *Controller) SetTrackEnd(fn func(t library.Track, played time.Duration, 
 // starts the first one at once.
 func (c *Controller) Request(ctx context.Context, by, name string, ts []library.Track) (int, error) {
 	var pending int
-	var refused, startNow bool
+	var refused, fed, startNow bool
 	c.withQ(func(q *Queue) {
 		pending = c.mix.waiting(by)
 		if c.mix.max > 0 && pending+len(ts) > c.mix.max {
@@ -68,15 +69,23 @@ func (c *Controller) Request(ctx context.Context, by, name string, ts []library.
 		c.mu.Lock()
 		playing := c.has
 		c.mu.Unlock()
-		if c.mix.feed(q) && !playing {
-			startNow = true
+		if c.mix.feed(q) {
+			fed = true
+			if !playing {
+				q.Jump(c.mix.fedPos) // a played-out queue left the cursor on its last song
+				startNow = true
+			}
 		}
 	})
 	if refused {
 		return pending, ErrTooManyPending
 	}
+	if fed {
+		c.discardPrefetch() // the DJ's next may already be queued in the engine
+	}
 	if startNow {
-		return pending, c.start(ctx)
+		// The request outlives the slash command that carried it.
+		return pending, c.start(context.WithoutCancel(ctx))
 	}
 	return pending, nil
 }
@@ -106,7 +115,8 @@ func (c *Controller) ClearRequests() (n int) {
 // ended tells the track-end hook what just finished and who asked for it.
 func (c *Controller) ended(played time.Duration) {
 	c.mu.Lock()
-	t, has, fn, by, name := c.current, c.has, c.onEnd, c.curBy, c.curName
+	t, has, fn, by, name := c.current, c.has && !c.reported, c.onEnd, c.curBy, c.curName
+	c.reported = true
 	c.mu.Unlock()
 	if has && fn != nil {
 		fn(t, played, by, name)
@@ -119,7 +129,7 @@ func (c *Controller) began() {
 	c.withQ(func(q *Queue) {
 		by, name := q.Tag(q.idx)
 		c.mu.Lock()
-		c.curBy, c.curName = by, name
+		c.curBy, c.curName, c.reported = by, name, false
 		c.mu.Unlock()
 		c.mix.feed(q)
 	})

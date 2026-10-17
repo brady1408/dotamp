@@ -229,3 +229,22 @@ func TestPlaylistLabelIsLookedUpWhenNotRecalled(t *testing.T) {
 		t.Fatalf("playlist reply = %q", r.Text)
 	}
 }
+
+func TestPrecheckAnswersCachedRefusalsWithoutIO(t *testing.T) {
+	h := newHarness(t)
+	h.b.cfg.Player, h.b.cfg.Library, h.b.cfg.Commands = &fakePlayer{}, fakeLib{}, true
+	if r, ok := h.b.precheck(command{Name: "play", What: "heavy", Guild: 1, Voice: 10}); !ok || r.Text != "dotamp isn't broadcasting right now" {
+		t.Fatalf("not live: %v %+v", ok, r)
+	}
+	live(t, h, &fakePlayer{}, fakeLib{})
+	if r, ok := h.b.precheck(command{Name: "play", What: "heavy", Guild: 1, Voice: 11}); !ok || r.Text != "Join chan-10 to request songs" {
+		t.Fatalf("wrong channel: %v %+v", ok, r)
+	}
+	if r, ok := h.b.precheck(command{Name: "play", What: "t:s:404", Guild: 1, Voice: 10}); !ok || r.Text != "That choice expired; search again" {
+		t.Fatalf("expired: %v %+v", ok, r)
+	}
+	h.b.complete(context.Background(), "heavy")
+	if _, ok := h.b.precheck(command{Name: "play", What: "t:s:1", Guild: 1, Voice: 10}); ok {
+		t.Fatal("refused a good choice")
+	}
+}

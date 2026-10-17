@@ -60,20 +60,22 @@ func (q *Queue) InsertNext(t library.Track, by, name string) int {
 		return 0
 	}
 	i := q.idx + 1
+	if q.Shuffle {
+		q.ensureOrder() // keep the pass the DJ is on; the request just goes next
+	}
 	q.tracks = append(q.tracks[:i], append([]library.Track{t}, q.tracks[i:]...)...)
 	q.tags = append(q.tags[:i], append([]tag{{by, name}}, q.tags[i:]...)...)
-	q.order = nil
-	if q.Shuffle {
-		q.buildOrder()
-		rest := make([]int, 0, len(q.order))
-		for _, o := range q.order[1:] {
-			if o != i {
-				rest = append(rest, o)
-			}
-		}
-		q.order = append([]int{q.idx, i}, rest...) // current, the request, then the shuffle
-		q.opos = 0
+	if !q.Shuffle {
+		q.order = nil
+		return i
 	}
+	for k, o := range q.order {
+		if o >= i {
+			q.order[k] = o + 1 // rows at and after the insert moved down one
+		}
+	}
+	at := q.opos + 1
+	q.order = append(q.order[:at], append([]int{i}, q.order[at:]...)...)
 	return i
 }
 

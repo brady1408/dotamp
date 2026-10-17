@@ -178,3 +178,67 @@ func TestTrackEndReportsPlayedAndRequester(t *testing.T) {
 		t.Fatalf("ends = %v", got)
 	}
 }
+
+func TestRequestKeepsPlayingAfterTheCallersContextEnds(t *testing.T) {
+	c, _ := newTestController(t)
+	cctx, cancel := context.WithCancel(context.Background())
+	if _, err := c.Request(cctx, "a", "Alice", named("a1")); err != nil {
+		t.Fatal(err)
+	}
+	cancel() // the slash command's reply has gone out; its context is done
+	waitFor(t, func() bool { cur, ok := c.Current(); return ok && cur.ID == "a1" && c.eng.Length() > 0 })
+	c.eng.Seek(1500 * time.Millisecond) // past the buffered bytes: a fresh HTTP request on the source's context
+	time.Sleep(300 * time.Millisecond)
+	if err := c.eng.Err(); err != nil {
+		t.Fatalf("stream died with the caller's context: %v", err)
+	}
+}
+
+func TestRequestAfterTheQueuePlayedOutPlaysTheRequest(t *testing.T) {
+	c, _ := newTestController(t)
+	c.Enqueue(named("dj1")...)
+	_ = c.Jump(ctx, 0)
+	_ = c.Next(ctx) // nothing after dj1: stopped, cursor still on dj1
+	if _, ok := c.Current(); ok {
+		t.Fatal("still current after the queue played out")
+	}
+	c.Request(ctx, "a", "Alice", named("a1"))
+	waitFor(t, func() bool { cur, ok := c.Current(); return ok && cur.ID == "a1" })
+	if got := strings.Join(ids(c.Tracks()), " "); got != "dj1 a1" {
+		t.Fatalf("queue = %q", got)
+	}
+}
+
+func TestRequestDiscardsAPrefetchedNextTrack(t *testing.T) {
+	c, _ := newTestController(t)
+	c.Enqueue(named("dj1", "dj2")...)
+	_ = c.Jump(ctx, 0)
+	waitFor(t, func() bool { return c.eng.Length() > 0 })
+	c.maybePrefetch(ctx) // the 2 s fixture is inside prefetchAhead
+	c.mu.Lock()
+	pre := c.nextID
+	c.mu.Unlock()
+	if pre != "dj2" {
+		t.Fatalf("prefetched %q", pre)
+	}
+	c.Request(ctx, "a", "Alice", named("a1"))
+	c.mu.Lock()
+	after := c.nextID
+	c.mu.Unlock()
+	if after != "" || c.eng.PeekNext() != nil {
+		t.Fatalf("prefetch kept: %q", after)
+	}
+}
+
+func TestTrackEndIsReportedOnceWhenTheNextTrackFails(t *testing.T) {
+	c, lib := newTestController(t)
+	lib.fails = map[string]int{"b": 2}
+	var got []string
+	c.SetTrackEnd(func(t library.Track, _ time.Duration, _, _ string) { got = append(got, t.ID) })
+	c.Enqueue(named("a", "b")...)
+	_ = c.Jump(ctx, 0)
+	_ = c.Next(ctx)
+	if strings.Join(got, " ") != "a" {
+		t.Fatalf("ends = %v", got)
+	}
+}

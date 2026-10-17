@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/brady1408/dotamp/internal/library"
@@ -145,5 +146,27 @@ func TestHasNextIgnoresRepeat(t *testing.T) {
 	q.Jump(0)
 	if !q.HasNext() {
 		t.Fatal("HasNext false with a track after the cursor")
+	}
+}
+
+func TestInsertNextKeepsTheRestOfTheShuffleOrder(t *testing.T) {
+	var q Queue
+	q.Replace(named("a", "b", "c", "d", "e", "f"), 0)
+	q.Shuffle = true
+	q.Next()
+	q.Next()
+	snap := q
+	var rest []string
+	for snap.Next() {
+		rest = append(rest, snap.tracks[snap.idx].ID)
+	}
+	q.InsertNext(library.Track{ID: "r"}, "u", "U")
+	var got []string
+	for q.Next() {
+		got = append(got, q.tracks[q.idx].ID)
+	}
+	want := append([]string{"r"}, rest...)
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("after insert = %v, want %v", got, want)
 	}
 }

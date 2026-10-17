@@ -2,7 +2,6 @@ package broadcast
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/disgoorg/disgo/discord"
@@ -22,9 +21,11 @@ func commandDefs() []discord.ApplicationCommandCreate {
 }
 
 // onCommand turns a slash command into a command for the core and sends
-// the reply. An album or playlist needs a library round trip that can
-// outlast Discord's 3 s, so those are acknowledged first and the reply
-// edited in; the acknowledgement fixes the reply as public.
+// the reply. Refusals that need no library round trip go out at once and
+// stay private. A /play that passes them is acknowledged first, because
+// the search or fetch behind it can outlast Discord's 3 s; that
+// acknowledgement fixes the reply as public, which is what a successful
+// add wants.
 func (b *Broadcaster) onCommand(e *events.ApplicationCommandInteractionCreate) {
 	if !b.cfg.Commands || e.GuildID() == nil {
 		return
@@ -42,16 +43,26 @@ func (b *Broadcaster) onCommand(e *events.ApplicationCommandInteractionCreate) {
 	if ch, ok := b.deps.voiceOf(c.Guild, user.ID); ok {
 		c.Voice = ch
 	}
-	deferred := strings.HasPrefix(c.What, "a:") || strings.HasPrefix(c.What, "p:")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	if r, refused := b.precheck(c); refused {
+		defer cancel()
+		if err := e.CreateMessage(discord.MessageCreate{Content: r.Text, Flags: discord.MessageFlagEphemeral}, rest.WithCtx(ctx)); err != nil {
+			b.cfg.Logger.Warn("command reply", "err", err)
+		}
+		return
+	}
+	deferred := c.Name == "play"
 	if deferred {
-		if err := e.DeferCreateMessage(false); err != nil {
+		if err := e.DeferCreateMessage(false, rest.WithCtx(ctx)); err != nil {
+			cancel()
 			b.cfg.Logger.Warn("command defer", "err", err)
 			return
 		}
 	}
+	cancel()
 	go func() {
 		defer b.guard("command")
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		r := b.command(ctx, c)
 		var err error

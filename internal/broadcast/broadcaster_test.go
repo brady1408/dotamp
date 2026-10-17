@@ -321,3 +321,34 @@ func TestTrackEndIsLoggedOnlyWhileLiveAndSavedAsANight(t *testing.T) {
 	}
 	waitFor(t, "notice", func() bool { return strings.Contains(h.lastNotice(), "Saved Discord chan-10") })
 }
+
+func TestCloseSavesTheNightAndLogsTheCurrentTrack(t *testing.T) {
+	h := newHarness(t)
+	dir := t.TempDir()
+	var saved []string
+	h.b.cfg.History = history.NewWriter(dir)
+	h.b.cfg.SaveNights = true
+	h.b.cfg.Player = &fakePlayer{cur: &library.Track{ID: "s:9", Title: "Shine"}}
+	h.b.cfg.SaveNight = func(_ context.Context, name string, ts []library.Track) (string, error) {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		saved = append(saved, fmt.Sprintf("%s:%d", name, len(ts)))
+		return "Saved " + name, nil
+	}
+	if err := h.b.Toggle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "stream", func() bool { return h.b.streams.Load() == 1 })
+	h.b.TrackEnded(library.Track{ID: "s:1", Title: "Heavy"}, time.Minute, "u1", "Alice")
+	h.b.Close(context.Background())
+	h.mu.Lock()
+	got := append([]string(nil), saved...)
+	h.mu.Unlock()
+	if len(got) != 1 || !strings.HasSuffix(got[0], ":2") {
+		t.Fatalf("saved by the time Close returned: %v", got)
+	}
+	es, err := history.Read(dir, "1")
+	if err != nil || len(es) != 2 || es[1].Track.ID != "s:9" {
+		t.Fatalf("history = %+v %v", es, err)
+	}
+}
