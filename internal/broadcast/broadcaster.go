@@ -25,6 +25,7 @@ import (
 	"github.com/brady1408/dotamp/internal/audio"
 	"github.com/brady1408/dotamp/internal/history"
 	"github.com/brady1408/dotamp/internal/library"
+	"github.com/brady1408/dotamp/internal/stream"
 )
 
 // Config is everything a Broadcaster needs from the player.
@@ -433,104 +434,35 @@ func (b *Broadcaster) leaveCurrent(ctx context.Context) {
 // drain keeps the UDP socket from backing up; incoming audio is discarded.
 func (b *Broadcaster) drain(s *session) {
 	defer b.guard("drain")
-	buf := make([]byte, 4096)
-	for {
-		select {
-		case <-s.stop:
-			return
-		default:
-		}
-		if _, err := s.conn.UDP().Read(buf); err != nil {
-			return
-		}
-	}
+	stream.Drain(s.stop, s.conn.UDP())
 }
 
-// stream pulls from the feed every 20 ms, encodes, and sends audio or
-// silence as the Speaker decides. The unmute is deferred before anything
-// that can fail, so no exit path leaves the speakers off.
 func (b *Broadcaster) stream(s *session) {
 	defer b.cfg.Mute(false)
 	defer b.guard("stream")
 	b.streams.Add(1)
 	defer b.streams.Add(-1)
-	pipe, err := NewPipeline(b.cfg.Rate)
-	if err != nil {
+	err := stream.Run(s.stop, s.conn.UDP(), stream.Options{Rate: b.cfg.Rate, Feed: b.cfg.Feed, Logger: b.cfg.Logger, Label: s.name})
+	switch {
+	case err == nil:
+		return
+	case errors.Is(err, stream.ErrSetup):
 		b.cfg.Notify("Broadcast failed: " + err.Error())
 		go b.leave(context.Background(), s)
 		return
 	}
-	slice := b.cfg.Rate / 50 // frames per 20 ms
-	src := newFeeder(b.cfg.Feed, slice)
-	// The feed holds the last two seconds whether or not anyone listens;
-	// start live, not with a backlog that would play out as a rush.
-	for b.cfg.Feed.Read(src.buf) > 0 {
+	select {
+	case <-s.stop: // we are being torn down; the error is ours
+		return
+	default:
 	}
-	var sp Speaker
-	var pending [][]byte
-	now := time.Now()
-	pacer := NewPacer(now)
-	st := newStats(now)
-	last := now
-	// A fine tick with a wall-clock pacer: a tick that lands late sends the
-	// slots it owes, so timer jitter never opens a hole in the stream.
-	tick := time.NewTicker(5 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case <-s.stop:
-			return
-		case <-tick.C:
-		}
-		now = time.Now()
-		st.gap(now.Sub(last))
-		last = now
-		for range pacer.Due(now) {
-			if frames := src.take(); frames != nil {
-				pipe.Push(frames)
-			}
-			pending = append(pending, pipe.Packets()...)
-			var pkt []byte
-			sent := false
-			switch sp.Tick(len(pending) > 0) {
-			case SendAudio:
-				pkt, pending = pending[0], pending[1:]
-				sent = true
-			case SendSilence:
-				pkt = Silence
-			default:
-				st.slot(false, 0)
-				continue
-			}
-			t0 := time.Now()
-			_, err := s.conn.UDP().Write(pkt)
-			st.slot(sent, time.Since(t0))
-			if err != nil {
-				select {
-				case <-s.stop: // we are being torn down; the error is ours
-					return
-				default:
-				}
-				b.cfg.Logger.Warn("broadcast write", "err", err)
-				if s.retry {
-					b.cfg.Notify("Broadcast dropped: " + err.Error())
-					go b.leave(context.Background(), s)
-					return
-				}
-				go b.reopen(s, err)
-				return
-			}
-			if len(pending) > 10 { // the resampler yields one packet per slice; this is a bug guard
-				st.trimmed += len(pending) - 10
-				pending = pending[len(pending)-10:]
-			}
-		}
-		st.depth(b.cfg.Feed.Available())
-		if st.due(now) {
-			b.cfg.Logger.Info("broadcast", "channel", s.name, "stats", st.line(), "skipped", src.dropped)
-			st.reset(now)
-		}
+	b.cfg.Logger.Warn("broadcast write", "err", err)
+	if s.retry {
+		b.cfg.Notify("Broadcast dropped: " + err.Error())
+		go b.leave(context.Background(), s)
+		return
 	}
+	go b.reopen(s, err)
 }
 
 func (b *Broadcaster) reopen(s *session, cause error) {

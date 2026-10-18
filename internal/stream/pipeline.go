@@ -1,5 +1,5 @@
 // Package broadcast streams the player's audio into a Discord voice channel.
-package broadcast
+package stream
 
 import (
 	"github.com/thesyncim/gopus"

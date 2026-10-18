@@ -1,4 +1,4 @@
-package broadcast
+package stream
 
 import "time"
 

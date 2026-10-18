@@ -1,4 +1,4 @@
-package broadcast
+package stream
 
 import "github.com/brady1408/dotamp/internal/audio"
 
