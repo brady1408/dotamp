@@ -183,3 +183,16 @@ func (c *Client) toTrack(m metadata) library.Track {
 	}
 	return t
 }
+
+// Similar is Plex's sonic analysis: the tracks that sound most like t.
+func (c *Client) Similar(ctx context.Context, t library.Track, n int) ([]library.Track, error) {
+	var out container
+	if err := c.get(ctx, "/library/metadata/"+t.ID+"/nearest", url.Values{"limit": {strconv.Itoa(n)}}, &out); err != nil {
+		return nil, err
+	}
+	ts := make([]library.Track, 0, len(out.MediaContainer.Metadata))
+	for _, m := range out.MediaContainer.Metadata {
+		ts = append(ts, c.toTrack(m))
+	}
+	return ts, nil
+}

@@ -433,3 +433,23 @@ func (m *Library) DeletePlaylist(ctx context.Context, id string) error {
 	}
 	return l.DeletePlaylist(ctx, raw)
 }
+
+// Similar asks the track's own server; a server that cannot suggest
+// returns nothing rather than an error.
+func (m *Library) Similar(ctx context.Context, t library.Track, n int) ([]library.Track, error) {
+	sid, raw := split(t.ID, m.Current().ID)
+	l, err := m.lib(sid)
+	if err != nil {
+		return nil, err
+	}
+	s, ok := l.(library.Similar)
+	if !ok {
+		return nil, nil
+	}
+	t.ID = raw
+	ts, err := s.Similar(ctx, t, n)
+	for i := range ts {
+		ts[i] = tagTrack(sid, ts[i])
+	}
+	return ts, err
+}

@@ -116,7 +116,10 @@ type envelope struct {
 		Playlists *struct {
 			Playlist []playlist `json:"playlist"`
 		} `json:"playlists"`
-		Playlist *playlist `json:"playlist"`
+		Playlist      *playlist `json:"playlist"`
+		SimilarSongs2 *struct {
+			Song []song `json:"song"`
+		} `json:"similarSongs2"`
 	} `json:"subsonic-response"`
 }
 
@@ -490,4 +493,20 @@ func (c *Client) Stream(ctx context.Context, t library.Track) (library.Stream, e
 		bitrate = 320
 	}
 	return library.Stream{URL: c.streamURL(url.Values{"id": {t.ID}, "format": {"mp3"}, "maxBitRate": {strconv.Itoa(bitrate)}}), Codec: "mp3"}, nil
+}
+
+// Similar is the server's similar-songs list (Navidrome takes it from
+// Last.fm), limited to songs in the library.
+func (c *Client) Similar(ctx context.Context, t library.Track, n int) ([]library.Track, error) {
+	env, err := c.call(ctx, "getSimilarSongs2", url.Values{"id": {t.ID}, "count": {strconv.Itoa(n)}})
+	if err != nil {
+		return nil, err
+	}
+	var out []library.Track
+	if s := env.Response.SimilarSongs2; s != nil {
+		for _, song := range s.Song {
+			out = append(out, c.toTrack(song, nil))
+		}
+	}
+	return out, nil
 }

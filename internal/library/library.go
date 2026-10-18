@@ -86,3 +86,8 @@ type Library interface {
 	DeletePlaylist(ctx context.Context, playlistID string) error
 	Stream(ctx context.Context, t Track) (Stream, error)
 }
+
+// Similar is implemented by libraries that can suggest tracks like t.
+type Similar interface {
+	Similar(ctx context.Context, t Track, n int) ([]Track, error)
+}
