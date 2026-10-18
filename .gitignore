@@ -5,3 +5,4 @@
 /docs/*.cast
 /docs/_still.gif
 /cmd/dotamp/*.syso
+deploy/dotamp-bot/dotamp-bot

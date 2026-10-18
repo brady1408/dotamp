@@ -1,0 +1,11 @@
+{
+  "discord_token_file": "/config/discord-token",
+  "allow_guilds": ["665728936340357130"],
+  "owner_id": "331650444860325888",
+  "dj_role": "DJ",
+  "autoplay": true,
+  "idle_leave_minutes": 5,
+  "plex": {"url": "http://192.168.23.23:32400", "token_file": "/config/plex-token"},
+  "navidrome": {"url": "http://192.168.23.44:4533", "user": "brady", "password_file": "/config/navidrome-password"},
+  "history_dir": "/config/history"
+}
