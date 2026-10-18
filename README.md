@@ -103,6 +103,21 @@ Requests are fair by construction: each person gets a lane, and the lanes take t
 
 Every song played while broadcasting is logged under `~/.config/dotamp/history/`, one file per server. The Library's **Nights** menu turns a server's history into a queue of its most-played songs, recent nights weighing more and skips counting against. With `"save_nights": true` each broadcast is also saved as a playlist on your music server, named for the channel and date.
 
+## Control
+
+A running dotamp listens on localhost for JSON commands, and `dotamp ctl` speaks to it from another shell (or over ssh), so scripts and assistants can read the player and drive the queue:
+
+| Command | Does |
+|---|---|
+| `dotamp ctl status` / `queue` / `requests` | what is playing, the queue with who asked, the request lanes |
+| `dotamp ctl search "collective soul"` | tracks, albums and playlists with ids like `t:…`, `a:…`, `p:…` |
+| `dotamp ctl album a:…` / `playlist p:…` | their tracks |
+| `dotamp ctl play IDS` / `add [--as NAME] IDS` | replace the queue, or append; `--as` makes it a request under NAME |
+| `dotamp ctl remove INDEX` / `clear` / `next` / `prev` / `pause` | the keys' equivalents |
+| `dotamp ctl playlists` / `playlist-create NAME IDS` / `playlist-add p:… IDS` | playlists on your servers |
+
+Ids may mix tracks, albums and playlists; albums and playlists expand to their tracks. Track ids come from a listing in the same dotamp run (`search`, `album`, `playlist`, `queue`). Replies are one line of JSON; exit status is 0 on success. The port and a random token live in `~/.config/dotamp/control.json` while dotamp runs, readable only by you, so only your own processes can talk to it. `"control": false` in the config turns it off.
+
 ## Visualizers
 
 `v` cycles four views of what the speaker is playing right now, all drawn from the same audio tap thirty times a second, all taking their colours from your terminal's palette:
@@ -133,7 +148,8 @@ The keyboard's media keys, play/pause, next and previous, reach dotamp even when
 
 ```json
 "discord": {"user_id": "123456789012345678", "token_file": "~/.config/dotamp/discord-token",
-            "commands": false, "max_pending_per_user": 0, "save_nights": false}
+            "commands": false, "max_pending_per_user": 0, "save_nights": false},
+"control": true
 ```
 
 `token_file` is optional and defaults to the path above. The token never goes into config.json.
