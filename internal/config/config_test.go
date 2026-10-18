@@ -104,3 +104,21 @@ func TestDiscordRequestFlagsRoundTrip(t *testing.T) {
 		t.Fatalf("HistoryDir() = %q, want %q", got, want)
 	}
 }
+
+func TestControlDefaultsOnAndCanBeTurnedOff(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if !(Config{}).ControlOn() {
+		t.Fatal("control must default to on")
+	}
+	off := false
+	if err := Save(Config{Server: "http://plex:32400", Token: "abc", Control: &off}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load()
+	if err != nil || c.ControlOn() {
+		t.Fatalf("control off did not persist: %v %+v", err, c.Control)
+	}
+	if got, want := ControlPath(), filepath.Join(filepath.Dir(Path()), "control.json"); got != want {
+		t.Fatalf("ControlPath() = %q", got)
+	}
+}

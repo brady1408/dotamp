@@ -31,7 +31,14 @@ type Config struct {
 	NoMediaKeys    bool       `json:"disable_media_keys,omitempty"` // leave the keyboard's media keys to other programs
 	ScopeAfterglow bool       `json:"scope_afterglow,omitempty"`    // the oscilloscope keeps last frame's trace dim under the live one
 	Discord        *Discord   `json:"discord,omitempty"`
+	Control        *bool      `json:"control,omitempty"` // the localhost control API; nil or true = on
 }
+
+// ControlOn reports whether the localhost control API should listen.
+func (c Config) ControlOn() bool { return c.Control == nil || *c.Control }
+
+// ControlPath is where a running dotamp publishes its control port and token.
+func ControlPath() string { return filepath.Join(filepath.Dir(Path()), "control.json") }
 
 // Discord is the bot that broadcasts the player into a voice channel.
 type Discord struct {
