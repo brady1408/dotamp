@@ -62,30 +62,22 @@ func (b *houseBot) onCommand(e *events.ApplicationCommandInteractionCreate) {
 	dj := isDJ(roles, b.roleName(*g), user.ID.String(), b.cfg.OwnerID, b.cfg.DJRole)
 	userCh := b.voiceOf(*g, user.ID)
 	roomCh, roomName := r.Where()
-	inChannel := roomCh != 0 && userCh == roomCh
-	alone := inChannel && b.listeners(*g, roomCh) <= 1
 	cmd := data.CommandName()
+	in := gateIn{cmd: cmd, dj: dj, roomCh: roomCh, roomName: roomName, userCh: userCh}
+	if roomCh != 0 {
+		in.listenersThere = b.listeners(*g, roomCh)
+		in.alone = userCh == roomCh && in.listenersThere <= 1
+	}
 	private := func(text string) { b.respond(e, reply{Text: text}, false) }
-	if !allowed(cmd, dj, inChannel, alone) {
-		switch {
-		case roomCh == 0 && cmd != "pause" && cmd != "clear" && cmd != "autoplay" && cmd != "leave":
-			private("I'm not playing; use /join")
-		case !inChannel && (cmd == "play" || cmd == "queue" || cmd == "np" || cmd == "skip" || cmd == "remove"):
-			private("Join " + roomName + " to request songs")
-		default:
-			private("That's for the DJ role")
-		}
+	refusal, deferred := gate(in)
+	if refusal != "" {
+		private(refusal)
 		return
 	}
 	if cmd == "play" && b.req.Expired(data.String("what")) {
 		private("That choice expired; search again")
 		return
 	}
-	if cmd == "join" && userCh == 0 {
-		private("Join a voice channel first")
-		return
-	}
-	deferred := cmd == "play" || cmd == "join"
 	if deferred {
 		if err := e.DeferCreateMessage(false); err != nil {
 			b.log.Warn("defer", "err", err)
@@ -118,12 +110,9 @@ func (b *houseBot) respond(e *events.ApplicationCommandInteractionCreate, r repl
 
 func (b *houseBot) run(ctx context.Context, r *room.Room, g snowflake.ID, cmd string, data discord.SlashCommandInteractionData, user snowflake.ID, name string, userCh snowflake.ID, dj bool) reply {
 	ctrl := r.Controller()
-	roomCh, roomName := r.Where()
+	_, roomName := r.Where()
 	switch cmd {
 	case "join":
-		if rep, move := joinReply(roomCh, roomName, userCh, b.listeners(g, roomCh)); !move {
-			return rep
-		}
 		chName := b.channelName(userCh)
 		if err := r.Join(ctx, userCh, chName); err != nil {
 			return reply{Text: "Couldn't join: " + err.Error()}
@@ -174,6 +163,9 @@ func (b *houseBot) run(ctx context.Context, r *room.Room, g snowflake.ID, cmd st
 	case "remove":
 		return removeReply(r, data.String("what"), user.String(), dj)
 	case "pause":
+		if _, ok := ctrl.Current(); !ok {
+			return reply{Text: "Nothing is playing"}
+		}
 		ctrl.TogglePause()
 		if r.Engine().Playing() {
 			return reply{Text: "Resumed by " + name, Public: true}

@@ -95,3 +95,31 @@ func TestJoinRefusesWhenBusyElsewhere(t *testing.T) {
 		t.Fatalf("%+v %v", r, move)
 	}
 }
+
+func TestGateRoutesRefusalsBeforeAnyDefer(t *testing.T) {
+	cases := []struct {
+		name     string
+		in       gateIn
+		refusal  string
+		deferred bool
+	}{
+		{"dj play while idle", gateIn{cmd: "play", dj: true, userCh: 11}, "I'm not playing; use /join", false},
+		{"queue while idle", gateIn{cmd: "queue", userCh: 11}, "I'm not playing; use /join", false},
+		{"play elsewhere", gateIn{cmd: "play", roomCh: 10, roomName: "a-team", userCh: 11}, "Join a-team to request songs", false},
+		{"pause non-dj", gateIn{cmd: "pause", roomCh: 10, userCh: 10}, "That's for the DJ role", false},
+		{"leave non-dj idle", gateIn{cmd: "leave", userCh: 11}, "I'm not playing; use /join", false},
+		{"join busy", gateIn{cmd: "join", roomCh: 10, roomName: "a-team", userCh: 11, listenersThere: 2}, "Busy in a-team; join there or wait", false},
+		{"join no voice", gateIn{cmd: "join"}, "Join a voice channel first", false},
+		{"join ok", gateIn{cmd: "join", userCh: 11}, "", true},
+		{"skip", gateIn{cmd: "skip", roomCh: 10, userCh: 10}, "", true},
+		{"leave dj", gateIn{cmd: "leave", dj: true, roomCh: 10, userCh: 10}, "", true},
+		{"play", gateIn{cmd: "play", roomCh: 10, userCh: 10}, "", true},
+		{"np", gateIn{cmd: "np", roomCh: 10, userCh: 10}, "", false},
+	}
+	for _, c := range cases {
+		refusal, deferred := gate(c.in)
+		if refusal != c.refusal || deferred != c.deferred {
+			t.Fatalf("%s: got %q %v", c.name, refusal, deferred)
+		}
+	}
+}

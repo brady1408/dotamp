@@ -169,11 +169,16 @@ func (c *Client) call(ctx context.Context, method string, q url.Values) (*envelo
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/rest/"+method+"?"+c.auth(q).Encode(), nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("subsonic: %s: bad request", method)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		// The URL carries the auth token and salt; report the cause only.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return nil, fmt.Errorf("subsonic: %s: %w", method, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

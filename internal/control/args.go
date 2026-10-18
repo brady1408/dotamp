@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const Usage = "usage: ctl VERB [args]  (status, queue, requests, search Q, album ID, playlist ID, play IDS, add [--as NAME] IDS, remove INDEX, clear, next, prev, pause, playlists, playlist-create NAME IDS, playlist-add ID IDS)"
+const Usage = "usage: dotamp ctl VERB [args]  (status, queue, requests, search Q, album ID, playlist ID, play IDS, add [--as NAME] IDS, remove INDEX, clear, next, prev, pause, playlists, playlist-create NAME IDS, playlist-add ID IDS)"
 
 // ParseArgs turns argv into a request; hyphens in verbs become underscores.
 func ParseArgs(args []string) (Request, error) {
@@ -28,7 +28,7 @@ func ParseArgs(args []string) (Request, error) {
 		}
 	case "remove":
 		if len(rest) == 0 {
-			return req, errors.New("usage: ctl remove INDEX")
+			return req, errors.New("usage: dotamp ctl remove INDEX")
 		}
 		i, err := strconv.Atoi(rest[0])
 		if err != nil {
@@ -37,12 +37,12 @@ func ParseArgs(args []string) (Request, error) {
 		req.Index = &i
 	case "playlist_create":
 		if len(rest) == 0 {
-			return req, errors.New("usage: ctl playlist-create NAME IDS...")
+			return req, errors.New("usage: dotamp ctl playlist-create NAME IDS...")
 		}
 		req.Name, req.IDs = rest[0], rest[1:]
 	case "playlist_add":
 		if len(rest) == 0 {
-			return req, errors.New("usage: ctl playlist-add PLAYLIST_ID IDS...")
+			return req, errors.New("usage: dotamp ctl playlist-add PLAYLIST_ID IDS...")
 		}
 		req.ID, req.IDs = rest[0], rest[1:]
 	default:
@@ -53,4 +53,3 @@ func ParseArgs(args []string) (Request, error) {
 	}
 	return req, nil
 }
-

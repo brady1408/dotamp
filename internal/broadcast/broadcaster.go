@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -449,7 +450,7 @@ func (b *Broadcaster) stream(s *session) {
 	case err == nil:
 		return
 	case errors.Is(err, stream.ErrSetup):
-		b.cfg.Notify("Broadcast failed: " + err.Error())
+		b.cfg.Notify("Broadcast failed: " + strings.TrimPrefix(err.Error(), stream.ErrSetup.Error()+": "))
 		go b.leave(context.Background(), s)
 		return
 	}

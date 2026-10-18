@@ -39,12 +39,17 @@ type lib struct {
 	url     string
 	similar []library.Track
 	fail    atomic.Bool
+	delay   atomic.Int64 // Similar sleeps this long (ns)
 }
 
 func (l *lib) Stream(context.Context, library.Track) (library.Stream, error) {
+	if l.fail.Load() {
+		return library.Stream{}, errors.New("plex down")
+	}
 	return library.Stream{URL: l.url + "/sine440-44k.flac", Codec: "flac"}, nil
 }
 func (l *lib) Similar(context.Context, library.Track, int) ([]library.Track, error) {
+	time.Sleep(time.Duration(l.delay.Load()))
 	if l.fail.Load() {
 		return nil, errors.New("plex down")
 	}
@@ -77,18 +82,35 @@ type harness struct {
 	posts     []string
 	now       time.Time
 	dir       string
+	opens     atomic.Int32
+	openDelay atomic.Int64
+	conns     []*conn
 }
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t *testing.T) *harness { return newHarnessWith(t, nil) }
+
+// newHarnessWith lets a test write history before the room loads it.
+func newHarnessWith(t *testing.T, before func(dir string)) *harness {
 	t.Helper()
 	srv := httptest.NewServer(http.FileServer(http.Dir("../audio/testdata")))
 	t.Cleanup(srv.Close)
 	h := &harness{lib: &lib{url: srv.URL, similar: tracks("s", 9)}, dir: t.TempDir(), now: time.Now()}
 	h.listeners.Store(2)
+	if before != nil {
+		before(h.dir)
+	}
 	h.r = New(ctx, Config{Guild: 1, Library: h.lib, History: history.NewWriter(h.dir), HistoryDir: h.dir,
 		Autoplay: true, IdleLeave: 5 * time.Minute, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Deps: Deps{
-			Open:      func(context.Context, snowflake.ID) (Conn, error) { return &conn{}, nil },
+			Open: func(context.Context, snowflake.ID) (Conn, error) {
+				h.opens.Add(1)
+				time.Sleep(time.Duration(h.openDelay.Load()))
+				c := &conn{}
+				h.mu.Lock()
+				h.conns = append(h.conns, c)
+				h.mu.Unlock()
+				return c, nil
+			},
 			Listeners: func(snowflake.ID) int { return int(h.listeners.Load()) },
 			Post:      func(_ snowflake.ID, m string) { h.mu.Lock(); h.posts = append(h.posts, m); h.mu.Unlock() },
 			Now:       func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now },
@@ -254,5 +276,90 @@ func TestAutoplayOffStaysQuietAndResetsOnLeave(t *testing.T) {
 	h.r.Leave(ctx)
 	if !h.r.Autoplay() {
 		t.Fatal("autoplay did not reset to the config default on leave")
+	}
+}
+
+func radioAhead(h *harness) []string {
+	var out []string
+	ts, i := h.r.Controller().Tracks(), h.r.Controller().Index()
+	for j := i + 1; j < len(ts); j++ {
+		if _, name := h.r.Controller().RequesterOf(j); name == radio.RadioBy {
+			out = append(out, ts[j].ID)
+		}
+	}
+	for _, l := range h.r.Controller().Pending() {
+		if l.By == radio.RadioBy {
+			for _, t := range l.Tracks {
+				out = append(out, t.ID)
+			}
+		}
+	}
+	return out
+}
+
+func TestARequestDuringAPickKeepsTheRadioOut(t *testing.T) {
+	h := newHarness(t)
+	h.r.Join(ctx, 10, "a-team")
+	waitFor(t, func() bool { return len(h.r.Controller().Tracks()) >= 2 })
+	h.lib.delay.Store(int64(300 * time.Millisecond))
+	_ = h.r.Controller().Next(ctx) // the start hook begins a slow pick
+	time.Sleep(50 * time.Millisecond)
+	h.r.Request(ctx, "u1", "Alice", []library.Track{{ID: "a1", Title: "A1", Duration: 2 * time.Second}, {ID: "a2", Title: "A2", Duration: 2 * time.Second}})
+	time.Sleep(500 * time.Millisecond)
+	if got := radioAhead(h); len(got) != 0 {
+		t.Fatalf("radio picks waiting while a request does: %v", got)
+	}
+}
+
+func TestLeaveDuringAPickStaysQuiet(t *testing.T) {
+	h := newHarness(t)
+	h.lib.delay.Store(int64(300 * time.Millisecond))
+	h.r.Join(ctx, 10, "a-team")
+	time.Sleep(20 * time.Millisecond)
+	h.r.Leave(ctx)
+	time.Sleep(500 * time.Millisecond)
+	if _, ok := h.current(); ok || len(h.r.Controller().Tracks()) != 0 {
+		t.Fatalf("a pick started after leaving: %v", h.r.Controller().Tracks())
+	}
+}
+
+func TestConcurrentJoinsOpenOnce(t *testing.T) {
+	h := newHarness(t)
+	h.openDelay.Store(int64(100 * time.Millisecond))
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); h.r.Join(ctx, 10, "a-team") }()
+	}
+	wg.Wait()
+	if n := h.opens.Load(); n != 1 {
+		t.Fatalf("opened %d connections for one channel", n)
+	}
+}
+
+func TestLibraryDownWithHistoryPostsOnce(t *testing.T) {
+	h := newHarnessWith(t, func(dir string) {
+		w := history.NewWriter(dir)
+		for i := 0; i < 8; i++ {
+			w.Append("1", history.Entry{At: time.Now().Add(-48 * time.Hour), Played: 200, Track: library.Track{ID: fmt.Sprintf("h%d", i), Title: "H", Artist: fmt.Sprintf("a%d", i), Duration: 200 * time.Second}})
+		}
+	})
+	h.lib.fail.Store(true)
+	h.r.Join(ctx, 10, "a-team")
+	time.Sleep(50 * time.Millisecond)
+	for i := 0; i < 5; i++ {
+		h.r.Tick(ctx)
+	}
+	h.mu.Lock()
+	posts := append([]string(nil), h.posts...)
+	h.mu.Unlock()
+	n := 0
+	for _, p := range posts {
+		if p == "Can't reach the library; queue a song to try again" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("posts = %v", posts)
 	}
 }

@@ -107,6 +107,20 @@ func (c *Controller) RequesterOf(i int) (by, name string) {
 	return
 }
 
+// DropRequests empties by's lane (the row already fed ahead stays); it
+// returns the songs dropped.
+func (c *Controller) DropRequests(by string) (n int) {
+	c.withQ(func(*Queue) {
+		for _, l := range c.mix.lanes {
+			if l.By == by {
+				n += len(l.Tracks)
+				l.Tracks = nil
+			}
+		}
+	})
+	return
+}
+
 // ClearRequests drops every lane; it returns the songs dropped.
 func (c *Controller) ClearRequests() (n int) {
 	c.withQ(func(*Queue) { n = c.mix.clear() })

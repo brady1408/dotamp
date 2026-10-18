@@ -58,6 +58,10 @@ type Room struct {
 	eng  *audio.Engine
 	ctrl *audio.Controller
 
+	joinMu sync.Mutex // one Join, Leave or reopen at a time
+	commit sync.Mutex // queue changes by Request, fill and Leave
+	gen    uint64     // bumped by every Leave, guarded by commit; a fill from an older gen drops its pick
+
 	mu        sync.Mutex
 	channel   snowflake.ID
 	name      string
@@ -93,13 +97,15 @@ func New(ctx context.Context, cfg Config) *Room {
 
 // Join plays in channel, moving from wherever the bot was.
 func (r *Room) Join(ctx context.Context, channel snowflake.ID, name string) error {
+	r.joinMu.Lock()
+	defer r.joinMu.Unlock()
 	r.mu.Lock()
 	same := r.channel == channel
 	r.mu.Unlock()
 	if same {
 		return nil
 	}
-	r.Leave(ctx)
+	r.leaveLocked(ctx)
 	conn, err := r.cfg.Deps.Open(ctx, channel)
 	if err != nil {
 		return err
@@ -133,10 +139,21 @@ func (r *Room) run(stop chan struct{}, conn Conn) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	conn.Close(ctx)
-	if again, err := r.cfg.Deps.Open(ctx, ch); err == nil {
+	r.joinMu.Lock()
+	select {
+	case <-stop: // a /leave or /join got there first
+		r.joinMu.Unlock()
+		return
+	default:
+	}
+	again, err := r.cfg.Deps.Open(ctx, ch)
+	if err == nil {
 		r.mu.Lock()
 		r.conn = again
 		r.mu.Unlock()
+	}
+	r.joinMu.Unlock()
+	if err == nil {
 		go stream.Drain(stop, again.UDP())
 		if stream.Run(stop, again.UDP(), opts) == nil {
 			return
@@ -149,6 +166,12 @@ func (r *Room) run(stop chan struct{}, conn Conn) {
 // Leave stops playing, clears the queue and lanes and returns the number
 // of requests dropped. Autoplay returns to the config default.
 func (r *Room) Leave(ctx context.Context) int {
+	r.joinMu.Lock()
+	defer r.joinMu.Unlock()
+	return r.leaveLocked(ctx)
+}
+
+func (r *Room) leaveLocked(ctx context.Context) int {
 	r.mu.Lock()
 	if r.channel == 0 {
 		r.mu.Unlock()
@@ -160,7 +183,11 @@ func (r *Room) Leave(ctx context.Context) int {
 	r.mu.Unlock()
 	close(stop)
 	conn.Close(ctx)
-	return r.ctrl.Clear() // after channel = 0, so the cut track is not logged
+	r.commit.Lock()
+	r.gen++
+	n := r.ctrl.Clear() // after channel = 0, so the cut track is not logged
+	r.commit.Unlock()
+	return n
 }
 
 // Where is the channel being played to, or 0.
@@ -170,13 +197,17 @@ func (r *Room) Where() (snowflake.ID, string) {
 	return r.channel, r.name
 }
 
-// Request queues for a listener; a radio pick fed ahead makes way.
+// Request queues for a listener; radio makes way, whether its pick is fed
+// ahead or still waiting in its lane.
 func (r *Room) Request(ctx context.Context, by, name string, ts []library.Track) (int, error) {
+	r.commit.Lock()
+	defer r.commit.Unlock()
 	if i := r.ctrl.Index(); i >= 0 {
 		if _, who := r.ctrl.RequesterOf(i + 1); who == radio.RadioBy {
 			_ = r.ctrl.Remove(context.WithoutCancel(ctx), i+1)
 		}
 	}
+	r.ctrl.DropRequests(radio.RadioBy)
 	r.mu.Lock()
 	r.failures = 0
 	r.mu.Unlock()
@@ -265,7 +296,24 @@ func (r *Room) Tick(ctx context.Context) {
 	r.fill(ctx)
 }
 
+// waiting reports whether something will play next without the radio:
+// a row after the cursor, or a listener's lane with songs.
+func (r *Room) waiting() bool {
+	ts, i := r.ctrl.Tracks(), r.ctrl.Index()
+	if i >= 0 && i < len(ts)-1 {
+		return true
+	}
+	for _, l := range r.ctrl.Pending() {
+		if len(l.Tracks) > 0 && l.By != radio.RadioBy {
+			return true
+		}
+	}
+	return false
+}
+
 // fill feeds one radio pick when autoplay is on and nothing else waits.
+// The pick is chosen without locks (it can be slow) and committed only if
+// the room is still where it was and still has nothing next.
 func (r *Room) fill(ctx context.Context) {
 	if !r.filling.CompareAndSwap(false, true) {
 		return
@@ -275,18 +323,12 @@ func (r *Room) fill(ctx context.Context) {
 	ch, on, fails := r.channel, r.autoplay, r.failures
 	recent := append([]history.Entry(nil), r.recent...)
 	r.mu.Unlock()
-	if ch == 0 || !on || fails >= 3 {
+	if ch == 0 || !on || fails >= 3 || r.waiting() {
 		return
 	}
-	ts, i := r.ctrl.Tracks(), r.ctrl.Index()
-	if i >= 0 && i < len(ts)-1 {
-		return // something is already next
-	}
-	for _, l := range r.ctrl.Pending() {
-		if len(l.Tracks) > 0 {
-			return
-		}
-	}
+	r.commit.Lock()
+	gen := r.gen
+	r.commit.Unlock()
 	var last *library.Track
 	if cur, ok := r.ctrl.Current(); ok {
 		last = &cur
@@ -295,7 +337,19 @@ func (r *Room) fill(ctx context.Context) {
 		last = &t
 	}
 	seed := uint64(time.Now().UnixNano())
-	t, err := radio.Pick(ctx, r.cfg.Library, radio.Input{Last: last, History: recent, Queue: ts, Now: r.cfg.Deps.Now(), Rand: rand.New(rand.NewPCG(seed, seed>>1))})
+	t, err := radio.Pick(ctx, r.cfg.Library, radio.Input{Last: last, History: recent, Queue: r.ctrl.Tracks(), Now: r.cfg.Deps.Now(), Rand: rand.New(rand.NewPCG(seed, seed>>1))})
+	if err == nil {
+		r.commit.Lock()
+		r.mu.Lock()
+		stale := r.gen != gen || r.channel != ch || !r.autoplay
+		r.mu.Unlock()
+		if stale || r.waiting() {
+			r.commit.Unlock()
+			return
+		}
+		_, err = r.ctrl.Request(context.WithoutCancel(ctx), radio.RadioBy, radio.RadioBy, []library.Track{t})
+		r.commit.Unlock()
+	}
 	if err != nil {
 		r.mu.Lock()
 		r.failures++
@@ -310,7 +364,6 @@ func (r *Room) fill(ctx context.Context) {
 	r.mu.Lock()
 	r.failures = 0
 	r.mu.Unlock()
-	_, _ = r.ctrl.Request(context.WithoutCancel(ctx), radio.RadioBy, radio.RadioBy, []library.Track{t})
 }
 
 // ended logs a finished track while joined.
