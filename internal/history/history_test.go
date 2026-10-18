@@ -75,3 +75,15 @@ func TestScoreTreatsUnknownDurationAsPlayedThrough(t *testing.T) {
 		t.Fatalf("score = %+v", s)
 	}
 }
+
+func TestRadioPlaysWeighHalf(t *testing.T) {
+	now := time.Now()
+	es := []Entry{
+		{At: now, Played: 240, Track: library.Track{ID: "r", Duration: 240 * time.Second}, By: "radio"},
+		{At: now, Played: 240, Track: library.Track{ID: "q", Duration: 240 * time.Second}, By: "u1"},
+	}
+	s := Score(es, now)
+	if s[0].Track.ID != "q" || s[1].Score > 0.51 || s[1].Score < 0.49 {
+		t.Fatalf("scores = %+v", s)
+	}
+}

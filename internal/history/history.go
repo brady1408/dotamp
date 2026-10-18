@@ -138,6 +138,9 @@ func Score(es []Entry, now time.Time) []Scored {
 			s = &Scored{Track: e.Track}
 			byID[e.Track.ID] = s
 		}
+		if e.By == "radio" { // the room did not ask for it; it counts half
+			v /= 2
+		}
 		s.Score += w * v
 		if e.At.After(s.Last) {
 			s.Last = e.At
