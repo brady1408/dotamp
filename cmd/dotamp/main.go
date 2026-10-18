@@ -22,6 +22,7 @@ import (
 	"github.com/brady1408/dotamp/internal/audio"
 	"github.com/brady1408/dotamp/internal/broadcast"
 	"github.com/brady1408/dotamp/internal/config"
+	"github.com/brady1408/dotamp/internal/control"
 	"github.com/brady1408/dotamp/internal/history"
 	"github.com/brady1408/dotamp/internal/library"
 	"github.com/brady1408/dotamp/internal/mediakeys"
@@ -59,10 +60,12 @@ func main() {
 		err = addNavidrome(flag.Arg(1), flag.Arg(2))
 	case "discord":
 		err = addDiscord(flag.Arg(1))
+	case "ctl":
+		err = ctl(flag.Args()[1:])
 	case "":
 		err = mediakeys.RunMain(func() error { return run(*debugLog, *silent) })
 	default:
-		err = fmt.Errorf("unknown command %q (try: dotamp login, dotamp servers, dotamp navidrome URL USER, dotamp discord USER_ID)", flag.Arg(0))
+		err = fmt.Errorf("unknown command %q (try: dotamp login, dotamp servers, dotamp navidrome URL USER, dotamp discord USER_ID, dotamp ctl VERB)", flag.Arg(0))
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "dotamp:", err)
@@ -677,6 +680,7 @@ func run(debugLog, silent bool) (err error) {
 	})
 	app.SetSwitcher(lib)
 	app.SetSaver(lib)
+	var bc *broadcast.Broadcaster
 	if cfg.Discord != nil {
 		if tok, err := os.ReadFile(cfg.DiscordTokenPath()); err == nil {
 			uid, _ := snowflake.Parse(cfg.Discord.UserID)
@@ -705,7 +709,7 @@ func run(debugLog, silent bool) (err error) {
 				}
 				ctrl.SetMaxPending(cfg.Discord.MaxPendingPerUser)
 			}
-			bc := broadcast.New(bcfg)
+			bc = broadcast.New(bcfg)
 			defer bc.Close(context.Background())
 			app.SetBroadcaster(bc)
 			if cfg.Discord.Commands {
@@ -720,6 +724,19 @@ func run(debugLog, silent bool) (err error) {
 			}
 		} else {
 			log.Printf("discord: %v", err)
+		}
+	}
+	if cfg.ControlOn() {
+		live := func() string { return "" }
+		if bc != nil {
+			live = bc.Channel
+		}
+		srv, err := control.Listen(config.ControlPath(), ctlPlayer{ctrl: ctrl, eng: eng, lib: lib, app: app, live: live})
+		if err != nil {
+			log.Printf("control: %v", err)
+		} else {
+			defer srv.Close()
+			log.Printf("control: listening on %s", srv.Addr())
 		}
 	}
 	app.SetVisual(cfg.Visual)

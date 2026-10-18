@@ -8,11 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/brady1408/dotamp/internal/config"
+	"github.com/brady1408/dotamp/internal/control"
 	"github.com/brady1408/dotamp/internal/history"
 	"github.com/brady1408/dotamp/internal/library"
 )
@@ -308,5 +310,44 @@ func TestNightAdapterSkipsTracksFromUnreachableServers(t *testing.T) {
 	name, ts, skipped, err := n.Night(context.Background(), "g1")
 	if err != nil || name != "Kicarus" || len(ts) != 1 || ts[0].ID != "a:1" || skipped != 1 {
 		t.Fatalf("%q %v %d %v", name, ts, skipped, err)
+	}
+}
+
+func TestParseCtlArgs(t *testing.T) {
+	cases := []struct {
+		args []string
+		want control.Request
+	}{
+		{[]string{"status"}, control.Request{Op: "status"}},
+		{[]string{"search", "collective soul"}, control.Request{Op: "search", Q: "collective soul"}},
+		{[]string{"add", "--as", "Claude", "t:s:1", "a:s:9"}, control.Request{Op: "add", As: "Claude", IDs: []string{"t:s:1", "a:s:9"}}},
+		{[]string{"playlist-create", "Road Trip", "t:s:1", "t:s:2"}, control.Request{Op: "playlist_create", Name: "Road Trip", IDs: []string{"t:s:1", "t:s:2"}}},
+		{[]string{"playlist-add", "p:s:p1", "t:s:7"}, control.Request{Op: "playlist_add", ID: "p:s:p1", IDs: []string{"t:s:7"}}},
+		{[]string{"album", "a:s:9"}, control.Request{Op: "album", ID: "a:s:9"}},
+	}
+	for _, c := range cases {
+		got, err := parseCtl(c.args)
+		if err != nil || !reflect.DeepEqual(got, c.want) {
+			t.Fatalf("%v → %+v, %v; want %+v", c.args, got, err, c.want)
+		}
+	}
+	if got, _ := parseCtl([]string{"remove", "2"}); got.Index == nil || *got.Index != 2 {
+		t.Fatalf("remove index = %+v", got.Index)
+	}
+	if _, err := parseCtl([]string{"remove", "x"}); err == nil {
+		t.Fatal("a non-number index must fail")
+	}
+	if _, err := parseCtl(nil); err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Fatalf("no verb = %v", err)
+	}
+}
+
+func TestCtlWithoutARunningPlayerSaysSo(t *testing.T) {
+	bin := build(t)
+	cmd := exec.Command(bin, "ctl", "status")
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir())
+	out, err := cmd.Output()
+	if err == nil || !strings.Contains(string(out), `"dotamp is not running"`) {
+		t.Fatalf("out=%s err=%v", out, err)
 	}
 }
