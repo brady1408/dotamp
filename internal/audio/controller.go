@@ -33,6 +33,7 @@ type Controller struct {
 	curName   string
 	reported  bool // the current track's end has been reported
 	onEnd     func(t library.Track, played time.Duration, by, name string)
+	onStart   func(t library.Track, by, name string)
 }
 
 func NewController(lib library.Library, eng *Engine, notify func(string)) *Controller {
@@ -133,6 +134,20 @@ func (c *Controller) began() {
 		c.mu.Unlock()
 		c.mix.feed(q)
 	})
+	c.mu.Lock()
+	fn, t, by, name := c.onStart, c.current, c.curBy, c.curName
+	c.mu.Unlock()
+	if fn != nil {
+		fn(t, by, name)
+	}
+}
+
+// SetTrackStart is told every track that becomes current and who asked
+// for it, outside the controller's locks.
+func (c *Controller) SetTrackStart(fn func(t library.Track, by, name string)) {
+	c.mu.Lock()
+	c.onStart = fn
+	c.mu.Unlock()
 }
 
 func (c *Controller) Current() (library.Track, bool) {

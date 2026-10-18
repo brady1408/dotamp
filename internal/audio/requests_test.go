@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"sync"
 	"context"
 	"errors"
 	"strings"
@@ -331,5 +332,21 @@ func TestAPlayedRequestIsNotFedAgain(t *testing.T) {
 	}
 	if got := strings.Join(ids(c.Tracks()), " "); got != "dj1 g1 dj2 dj3" {
 		t.Fatalf("queue = %q", got)
+	}
+}
+
+func TestTrackStartIsReportedWithTheRequester(t *testing.T) {
+	c, _ := newTestController(t)
+	var got []string
+	var mu sync.Mutex
+	c.SetTrackStart(func(t library.Track, by, name string) { mu.Lock(); got = append(got, t.ID+"/"+name); mu.Unlock() })
+	c.Enqueue(named("dj1")...)
+	_ = c.Jump(ctx, 0)
+	c.Request(ctx, "a", "Alice", named("a1"))
+	_ = c.Next(ctx)
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(got, " ") != "dj1/ a1/Alice" {
+		t.Fatalf("starts = %v", got)
 	}
 }
