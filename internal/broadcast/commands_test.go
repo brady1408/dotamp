@@ -60,10 +60,18 @@ type fakeLib struct {
 }
 
 func (l fakeLib) Search(ctx context.Context, q string) (library.SearchResult, error) {
+	q = strings.ToLower(q)
 	select {
 	case <-time.After(l.delay):
 	case <-ctx.Done():
 		return library.SearchResult{}, ctx.Err()
+	}
+	if strings.Contains(q, "god") { // the server's first hit is the wrong song
+		return library.SearchResult{Tracks: []library.Track{
+			{ID: "s:7", Title: "God Is a Weapon", Artist: "Falling in Reverse"},
+			{ID: "s:8", Title: "God is a woman", Artist: "Ariana Grande"},
+			{ID: "s:9", Title: "God's Gonna Cut You Down", Artist: "Johnny Cash"},
+		}}, nil
 	}
 	return library.SearchResult{
 		Tracks: []library.Track{{ID: "s:1", Title: "Heavy", Artist: "Collective Soul"}},
@@ -246,5 +254,25 @@ func TestPrecheckAnswersCachedRefusalsWithoutIO(t *testing.T) {
 	h.b.complete(context.Background(), "heavy")
 	if _, ok := h.b.precheck(command{Name: "play", What: "t:s:1", Guild: 1, Voice: 10}); ok {
 		t.Fatal("refused a good choice")
+	}
+}
+
+func TestFreeTextPicksTheBestMatchNotTheFirstHit(t *testing.T) {
+	h := newHarness(t)
+	p := &fakePlayer{}
+	live(t, h, p, fakeLib{})
+	r := h.b.command(context.Background(), command{Name: "play", UserID: "u1", UserName: "matrix", What: "ariana grande god is a woman", Guild: 1, Voice: 10})
+	if !r.Public || r.Text != "matrix added God is a woman · Ariana Grande" || strings.Join(p.requests, " ") != "matrix:s:8" {
+		t.Fatalf("reply = %+v requests %v", r, p.requests)
+	}
+}
+
+func TestFreeTextWithNothingCloseAsksForAPick(t *testing.T) {
+	h := newHarness(t)
+	p := &fakePlayer{}
+	live(t, h, p, fakeLib{})
+	r := h.b.command(context.Background(), command{Name: "play", UserID: "u1", UserName: "matrix", What: "god bless the broken road", Guild: 1, Voice: 10})
+	if r.Public || len(p.requests) != 0 || !strings.HasPrefix(r.Text, `Nothing close to "god bless the broken road"`) || !strings.Contains(r.Text, "God is a woman") {
+		t.Fatalf("reply = %+v requests %v", r, p.requests)
 	}
 }

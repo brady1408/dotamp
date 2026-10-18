@@ -242,7 +242,7 @@ func (b *Broadcaster) play(ctx context.Context, c command) reply {
 			return reply{Text: "Couldn't fetch that: " + err.Error()}
 		}
 		ts, label = got, b.labelOr(c.What, b.playlistName(ctx, id))
-	default:
+	default: // typed without picking from autocomplete: rank the hits against the words
 		res, err := b.cfg.Library.Search(ctx, c.What)
 		if err != nil {
 			return reply{Text: "Couldn't fetch that: " + err.Error()}
@@ -250,7 +250,15 @@ func (b *Broadcaster) play(ctx context.Context, c command) reply {
 		if len(res.Tracks) == 0 {
 			return reply{Text: fmt.Sprintf("Nothing found for %q", c.What)}
 		}
-		ts, label = res.Tracks[:1], trackLabel(res.Tracks[0])
+		best, score := bestMatch(c.What, res.Tracks)
+		if score < matchFloor {
+			var opts []string
+			for _, t := range res.Tracks[:min(3, len(res.Tracks))] {
+				opts = append(opts, trackLabel(t))
+			}
+			return reply{Text: fmt.Sprintf("Nothing close to %q; pick from the list: %s", c.What, strings.Join(opts, "; "))}
+		}
+		ts, label = []library.Track{best}, trackLabel(best)
 	}
 	if len(ts) == 0 {
 		return reply{Text: fmt.Sprintf("Nothing found for %q", c.What)}
@@ -274,6 +282,52 @@ func (b *Broadcaster) play(ctx context.Context, c command) reply {
 		return reply{Text: c.UserName + " added " + label, Public: true}
 	}
 	return reply{Text: fmt.Sprintf("%s added %s (%d songs)", c.UserName, label, len(ts)), Public: true}
+}
+
+// matchFloor is the share of the typed words a hit must contain to be
+// queued without a pick; below it the asker is shown the choices instead.
+const matchFloor = 0.6
+
+var stopwords = map[string]bool{"the": true, "and": true, "of": true, "in": true, "on": true, "to": true, "is": true, "it": true, "my": true, "me": true, "you": true, "your": true, "for": true, "with": true}
+
+// words lowercases, strips punctuation and drops the little words that
+// every title shares, so "god is a woman" is judged on god and woman.
+func words(s string) []string {
+	var out []string
+	for _, w := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r > 127)
+	}) {
+		if len(w) > 2 && !stopwords[w] {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// bestMatch is the hit whose artist and title cover most of the typed
+// words, and that share; ties keep the server's order.
+func bestMatch(query string, ts []library.Track) (library.Track, float64) {
+	q := words(query)
+	if len(q) == 0 {
+		return ts[0], 1
+	}
+	best, bestScore := ts[0], -1.0
+	for _, t := range ts {
+		have := map[string]bool{}
+		for _, w := range words(t.Artist + " " + t.Title) {
+			have[w] = true
+		}
+		hit := 0
+		for _, w := range q {
+			if have[w] {
+				hit++
+			}
+		}
+		if score := float64(hit) / float64(len(q)); score > bestScore {
+			best, bestScore = t, score
+		}
+	}
+	return best, bestScore
 }
 
 func (b *Broadcaster) labelOr(value, fallback string) string {
