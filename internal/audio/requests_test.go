@@ -314,3 +314,22 @@ func TestEnqueueAndPlayStartsWhenIdleAndOnlyAppendsOtherwise(t *testing.T) {
 	}
 	waitFor(t, func() bool { cur, ok := c.Current(); return ok && cur.ID == "d" })
 }
+
+func TestAPlayedRequestIsNotFedAgain(t *testing.T) {
+	c, _ := newTestController(t)
+	c.Enqueue(named("dj1", "dj2", "dj3")...)
+	_ = c.Jump(ctx, 0)
+	c.Request(ctx, "g", "Gentry", named("g1")) // fed at 1
+	var played []string
+	for i := 0; i < 4; i++ {
+		cur, _ := c.Current()
+		played = append(played, cur.ID)
+		_ = c.Next(ctx)
+	}
+	if got := strings.Join(played, " "); got != "dj1 g1 dj2 dj3" {
+		t.Fatalf("played %q; Gentry's one song must play once", got)
+	}
+	if got := strings.Join(ids(c.Tracks()), " "); got != "dj1 g1 dj2 dj3" {
+		t.Fatalf("queue = %q", got)
+	}
+}

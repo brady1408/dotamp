@@ -62,6 +62,9 @@ func (m *mixer) songs() int {
 // feed inserts the next lane's song after the cursor unless a request is
 // already fed ahead. It reports whether it inserted.
 func (m *mixer) feed(q *Queue) bool {
+	if m.fedPos >= 0 && m.fedPos == q.idx {
+		m.fedPos, m.fedBy = -1, "" // the fed request is playing: its turn is spent, never rescue it
+	}
 	m.rescue(q)
 	if m.fedPos > q.idx || m.songs() == 0 {
 		return false
