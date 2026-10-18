@@ -162,6 +162,9 @@ func (c *Client) toPlaylist(m metadata) library.Playlist {
 	return library.Playlist{ID: m.RatingKey, Name: m.Title, TrackCount: m.LeafCount, Server: c.serverID}
 }
 
+// MachineID is the server's own id, which multi uses as the server ID.
+func (c *Client) MachineID(ctx context.Context) (string, error) { return c.machineIdentifier(ctx) }
+
 // machineIdentifier is the server's own id, which playlist URIs must name.
 // The plex.tv connection records it as the server id, but a manually
 // configured server does not, so it is read from /identity once.
