@@ -26,11 +26,13 @@ var (
 
 // Server answers control requests for one running player.
 type Server struct {
-	ln    net.Listener
-	path  string
-	token string
-	p     Player
-	wg    sync.WaitGroup
+	ln     net.Listener
+	path   string
+	token  string
+	p      Player
+	wg     sync.WaitGroup
+	ctx    context.Context // ends in Close, so a handler stuck in the library lets go
+	cancel context.CancelFunc
 
 	mu   sync.Mutex
 	seen map[string]seen // typed track id -> the track, from the last listing
@@ -54,6 +56,7 @@ func Listen(path string, p Player) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{ln: ln, path: path, token: hex.EncodeToString(tok), p: p, seen: map[string]seen{}}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 	b, _ := json.Marshal(map[string]any{"port": ln.Addr().(*net.TCPAddr).Port, "token": s.token})
 	if err := os.WriteFile(path, b, 0o600); err != nil {
 		ln.Close()
@@ -65,11 +68,18 @@ func Listen(path string, p Player) (*Server, error) {
 
 func (s *Server) Addr() string { return s.ln.Addr().String() }
 
-// Close stops listening, waits for calls in flight and removes the file.
+// Close stops listening, ends calls in flight and removes the file, unless
+// another dotamp has since published its own port there.
 func (s *Server) Close() error {
 	err := s.ln.Close()
+	s.cancel()
 	s.wg.Wait()
-	os.Remove(s.path)
+	if b, rerr := os.ReadFile(s.path); rerr == nil {
+		var f struct{ Token string }
+		if json.Unmarshal(b, &f) == nil && f.Token == s.token {
+			os.Remove(s.path)
+		}
+	}
 	return err
 }
 
@@ -100,16 +110,21 @@ func (s *Server) handle(conn net.Conn) {
 		enc.Encode(Reply{Error: "bad token"})
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	ctx, cancel := context.WithTimeout(s.ctx, callTimeout)
 	defer cancel()
 	res, err := s.dispatch(ctx, req)
 	conn.SetWriteDeadline(time.Now().Add(readTimeout))
+	r := Reply{OK: err == nil, Result: res}
 	if err != nil {
-		enc.Encode(Reply{Error: err.Error()})
-		return
+		r.Error = err.Error()
 	}
-	enc.Encode(Reply{OK: true, Result: res})
+	enc.Encode(r)
 }
+
+// stream is the context for verbs that open a track: the stream must
+// outlive both the call and the server, so cancellation is dropped. The
+// HTTP source has its own timeouts.
+func stream(ctx context.Context) context.Context { return context.WithoutCancel(ctx) }
 
 func (s *Server) dispatch(ctx context.Context, req Request) (any, error) {
 	switch req.Op {
@@ -169,7 +184,7 @@ func (s *Server) dispatch(ctx context.Context, req Request) (any, error) {
 		if len(ts) == 0 {
 			return nil, errors.New("nothing to play")
 		}
-		if err := s.p.Play(ctx, ts); err != nil {
+		if err := s.p.Play(stream(ctx), ts); err != nil {
 			return nil, err
 		}
 		s.p.Notify("Playing " + ts[0].Title)
@@ -202,7 +217,10 @@ func (s *Server) dispatch(ctx context.Context, req Request) (any, error) {
 		if req.Index == nil {
 			return nil, errors.New("missing index")
 		}
-		if err := s.p.Remove(ctx, *req.Index); err != nil {
+		if n := len(s.p.Queue()); *req.Index < 0 || *req.Index >= n {
+			return nil, fmt.Errorf("no queue row %d", *req.Index)
+		}
+		if err := s.p.Remove(stream(ctx), *req.Index); err != nil {
 			return nil, err
 		}
 		return s.p.Status(), nil
@@ -215,12 +233,12 @@ func (s *Server) dispatch(ctx context.Context, req Request) (any, error) {
 		}
 		return map[string]any{"dropped_requests": n}, nil
 	case "next":
-		if err := s.p.Next(ctx); err != nil {
+		if err := s.p.Next(stream(ctx)); err != nil {
 			return nil, err
 		}
 		return s.p.Status(), nil
 	case "prev":
-		if err := s.p.Prev(ctx); err != nil {
+		if err := s.p.Prev(stream(ctx)); err != nil {
 			return nil, err
 		}
 		return s.p.Status(), nil
@@ -246,12 +264,17 @@ func (s *Server) dispatch(ctx context.Context, req Request) (any, error) {
 			return nil, err
 		}
 		saved, err := s.p.CreatePlaylist(ctx, req.Name, ts)
-		if err != nil && len(saved) == 0 {
-			return nil, err
-		}
 		out := []PlaylistInfo{}
 		for _, sv := range saved {
 			out = append(out, playlistInfo(sv.Playlist))
+		}
+		switch {
+		case err != nil && len(saved) == 0:
+			s.p.Notify("Save failed: " + err.Error())
+			return nil, err
+		case err != nil: // some servers saved, one did not: say both
+			s.p.Notify(fmt.Sprintf("Saved %s (%d); %s", req.Name, len(ts), err.Error()))
+			return map[string]any{"playlists": out}, err
 		}
 		s.p.Notify(fmt.Sprintf("Saved %s (%d)", req.Name, len(ts)))
 		return map[string]any{"playlists": out}, nil

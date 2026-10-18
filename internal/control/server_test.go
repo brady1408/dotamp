@@ -20,6 +20,9 @@ import (
 
 type fakePlayer struct {
 	mu      sync.Mutex
+	playCtx context.Context // the ctx Play was given
+	block   bool            // Search blocks until its ctx ends
+	partial bool            // CreatePlaylist saves one server and fails another
 	calls   []string
 	queue   []library.Track
 	names   []string
@@ -64,7 +67,11 @@ func (p *fakePlayer) Status() Status {
 func (p *fakePlayer) Queue() []library.Track { p.mu.Lock(); defer p.mu.Unlock(); return p.queue }
 func (p *fakePlayer) QueueNames() []string   { p.mu.Lock(); defer p.mu.Unlock(); return p.names }
 func (p *fakePlayer) Lanes() []audio.Lane    { return p.lanes }
-func (p *fakePlayer) Search(context.Context, string) (library.SearchResult, []library.Playlist, error) {
+func (p *fakePlayer) Search(ctx context.Context, _ string) (library.SearchResult, []library.Playlist, error) {
+	if p.block {
+		<-ctx.Done()
+		return library.SearchResult{}, nil, ctx.Err()
+	}
 	return library.SearchResult{
 		Tracks: []library.Track{{ID: "s:1", Title: "Heavy", Artist: "Collective Soul", Album: "Dosage", Duration: 248 * time.Second, Server: "s"}},
 		Albums: []library.Album{{ID: "s:9", Title: "Dosage", Artist: "Collective Soul", Year: 1999, TrackCount: 11, Server: "s"}},
@@ -76,10 +83,11 @@ func (p *fakePlayer) AlbumTracks(_ context.Context, id string) ([]library.Track,
 func (p *fakePlayer) PlaylistTracks(_ context.Context, id string) ([]library.Track, error) {
 	return []library.Track{{ID: "s:4", Server: "s"}, {ID: "s:5", Server: "s"}, {ID: "s:6", Server: "s"}}, nil
 }
-func (p *fakePlayer) Play(_ context.Context, ts []library.Track) error {
+func (p *fakePlayer) Play(ctx context.Context, ts []library.Track) error {
 	p.record("play:" + joinIDs(ts))
 	p.mu.Lock()
 	p.queue = ts
+	p.playCtx = ctx
 	p.mu.Unlock()
 	return nil
 }
@@ -109,7 +117,11 @@ func (p *fakePlayer) Playlists(context.Context) ([]library.Playlist, error) {
 }
 func (p *fakePlayer) CreatePlaylist(_ context.Context, name string, ts []library.Track) ([]library.Saved, error) {
 	p.record("create:" + name + ":" + joinIDs(ts))
-	return []library.Saved{{Server: "s", Playlist: library.Playlist{ID: "s:new", Name: name, TrackCount: len(ts), Server: "s"}, Tracks: len(ts)}}, nil
+	saved := []library.Saved{{Server: "s", Playlist: library.Playlist{ID: "s:new", Name: name, TrackCount: len(ts), Server: "s"}, Tracks: len(ts)}}
+	if p.partial {
+		return saved, errors.New("Navidrome failed: HTTP 500")
+	}
+	return saved, nil
 }
 func (p *fakePlayer) AddToPlaylist(_ context.Context, id string, ts []library.Track) error {
 	for _, t := range ts {
@@ -293,6 +305,9 @@ func TestTransportVerbsAndRemoveClear(t *testing.T) {
 	if r := call(t, c, Request{Op: "remove"}); r.OK || r.Error != "missing index" {
 		t.Fatalf("remove without index = %+v", r)
 	}
+	p.mu.Lock()
+	p.queue = []library.Track{{ID: "s:1"}}
+	p.mu.Unlock()
 	i := 0
 	call(t, c, Request{Op: "remove", Index: &i})
 	r := call(t, c, Request{Op: "clear"})
@@ -368,5 +383,87 @@ func TestSilentClientIsDropped(t *testing.T) {
 	conn.SetReadDeadline(time.Now().Add(time.Second))
 	if _, err := conn.Read(buf); err == nil {
 		t.Fatal("silent connection was not closed")
+	}
+}
+
+func TestStreamingVerbsOutliveTheCallAndTheServer(t *testing.T) {
+	p := &fakePlayer{}
+	path := filepath.Join(t.TempDir(), "control.json")
+	s, err := Listen(path, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewClient(path)
+	call(t, c, Request{Op: "search", Q: "heavy"})
+	call(t, c, Request{Op: "play", IDs: []string{"t:s:1"}})
+	p.mu.Lock()
+	ctx := p.playCtx
+	p.mu.Unlock()
+	if ctx == nil || ctx.Err() != nil {
+		t.Fatalf("the stream's context ended with the reply: %v", ctx)
+	}
+	s.Close()
+	if ctx.Err() != nil {
+		t.Fatal("the stream's context ended with the server; the track must play on")
+	}
+}
+
+func TestCloseDoesNotWaitOnASlowHandler(t *testing.T) {
+	p := &fakePlayer{block: true}
+	path := filepath.Join(t.TempDir(), "control.json")
+	s, err := Listen(path, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewClient(path)
+	go c.Call(context.Background(), Request{Op: "search", Q: "slow"})
+	time.Sleep(100 * time.Millisecond) // the handler is inside Search now
+	done := make(chan struct{})
+	go func() { s.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close waited on a handler stuck in the library")
+	}
+}
+
+func TestCloseLeavesAnotherServersFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.json")
+	a, err := Listen(path, &fakePlayer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Listen(path, &fakePlayer{}) // a second dotamp took the file over
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Close()
+	if r := call(t, NewClient(path), Request{Op: "status"}); !r.OK {
+		t.Fatalf("the first server's Close broke the second: %+v", r)
+	}
+	b.Close()
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the owner's Close left the file")
+	}
+}
+
+func TestPlaylistCreateReportsAPartialFailure(t *testing.T) {
+	c, p, _ := start(t)
+	p.partial = true
+	r := call(t, c, Request{Op: "playlist_create", Name: "Night", IDs: []string{"a:s:9"}})
+	if r.OK || !strings.Contains(r.Error, "Navidrome failed") {
+		t.Fatalf("reply = %+v", r)
+	}
+	if got := asMap(t, r.Result)["playlists"].([]any); len(got) != 1 {
+		t.Fatalf("the saved half is missing: %+v", r)
+	}
+}
+
+func TestRemoveOutOfRangeIsAnError(t *testing.T) {
+	c, p, _ := start(t)
+	p.queue = []library.Track{{ID: "s:1"}}
+	i := 5
+	if r := call(t, c, Request{Op: "remove", Index: &i}); r.OK || r.Error != "no queue row 5" || len(p.calls) != 0 {
+		t.Fatalf("reply = %+v calls %v", r, p.calls)
 	}
 }
