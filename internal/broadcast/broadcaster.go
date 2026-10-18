@@ -25,6 +25,7 @@ import (
 	"github.com/brady1408/dotamp/internal/audio"
 	"github.com/brady1408/dotamp/internal/history"
 	"github.com/brady1408/dotamp/internal/library"
+	"github.com/brady1408/dotamp/internal/requests"
 	"github.com/brady1408/dotamp/internal/stream"
 )
 
@@ -90,8 +91,7 @@ type Broadcaster struct {
 	client  *bot.Client
 	streams atomic.Int32 // live stream goroutines, for tests
 
-	cmu        sync.Mutex
-	choices    map[string]choice // autocomplete entries offered lately
+	req        *requests.Core // /play resolution and autocomplete memory
 	registered map[snowflake.ID]bool
 }
 
@@ -140,7 +140,9 @@ func newWith(cfg Config, d deps) *Broadcaster {
 	if cfg.Mute == nil {
 		cfg.Mute = func(bool) {}
 	}
-	return &Broadcaster{cfg: cfg, deps: d}
+	b := &Broadcaster{cfg: cfg, deps: d}
+	b.req = requests.New(func() library.Library { return b.cfg.Library })
+	return b
 }
 
 // Channel names the channel being broadcast to, or "" when not live.

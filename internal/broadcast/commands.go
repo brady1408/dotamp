@@ -13,12 +13,7 @@ import (
 
 	"github.com/brady1408/dotamp/internal/audio"
 	"github.com/brady1408/dotamp/internal/library"
-)
-
-const (
-	completeDeadline = 2500 * time.Millisecond // Discord allows 3 s for autocomplete
-	choiceTTL        = 10 * time.Minute
-	maxChoices       = 25
+	"github.com/brady1408/dotamp/internal/requests"
 )
 
 // Player is what the room's commands drive; the app supplies it.
@@ -47,103 +42,6 @@ type reply struct {
 	Public bool
 }
 
-// choice is an autocomplete entry the bot offered, kept so Enter on it can
-// be resolved: the library cannot fetch a track by ID.
-type choice struct {
-	label string
-	track *library.Track
-	at    time.Time
-}
-
-func (b *Broadcaster) remember(value, label string, t *library.Track) {
-	b.cmu.Lock()
-	defer b.cmu.Unlock()
-	if b.choices == nil {
-		b.choices = map[string]choice{}
-	}
-	now := time.Now()
-	for k, c := range b.choices {
-		if now.Sub(c.at) > choiceTTL {
-			delete(b.choices, k)
-		}
-	}
-	b.choices[value] = choice{label: label, track: t, at: now}
-}
-
-func (b *Broadcaster) recall(value string) (choice, bool) {
-	b.cmu.Lock()
-	defer b.cmu.Unlock()
-	c, ok := b.choices[value]
-	return c, ok && time.Since(c.at) <= choiceTTL
-}
-
-func trackLabel(t library.Track) string {
-	if t.Artist == "" {
-		return t.Title
-	}
-	return t.Title + " · " + t.Artist
-}
-
-// complete answers autocomplete for /play: tracks, then albums, then the
-// playlists whose names contain the query, within Discord's deadline.
-func (b *Broadcaster) complete(ctx context.Context, query string) []discord.AutocompleteChoice {
-	ctx, cancel := context.WithTimeout(ctx, completeDeadline)
-	defer cancel()
-	resCh := make(chan library.SearchResult, 1)
-	plCh := make(chan []library.Playlist, 1)
-	go func() {
-		r, err := b.cfg.Library.Search(ctx, query)
-		if err != nil {
-			r = library.SearchResult{}
-		}
-		resCh <- r
-	}()
-	go func() {
-		ps, _ := b.cfg.Library.Playlists(ctx)
-		plCh <- ps
-	}()
-	var res library.SearchResult
-	var pls []library.Playlist
-	for i := 0; i < 2; i++ {
-		select {
-		case res = <-resCh:
-		case pls = <-plCh:
-		case <-ctx.Done():
-			i = 2
-		}
-	}
-	var out []discord.AutocompleteChoice
-	// shown is the menu text; label is what the reply says was added
-	add := func(shown, value, label string, t *library.Track) {
-		if len(out) >= maxChoices {
-			return
-		}
-		b.remember(value, label, t)
-		out = append(out, discord.AutocompleteChoiceString{Name: cut(shown, 100), Value: value})
-	}
-	for i := range res.Tracks {
-		t := res.Tracks[i]
-		add("♪ "+trackLabel(t), "t:"+t.ID, trackLabel(t), &t)
-	}
-	for _, a := range res.Albums {
-		add("◎ "+a.Title+" · "+a.Artist, "a:"+a.ID, a.Title, nil)
-	}
-	q := strings.ToLower(query)
-	for _, p := range pls {
-		if strings.Contains(strings.ToLower(p.Name), q) {
-			add("☰ "+p.Name, "p:"+p.ID, p.Name, nil)
-		}
-	}
-	return out
-}
-
-func cut(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n-1] + "…"
-}
-
 // precheck answers what can be refused from cached state alone, before
 // any library round trip: not live, the asker elsewhere, an expired choice.
 // The adapter uses it to keep those refusals ephemeral.
@@ -157,10 +55,8 @@ func (b *Broadcaster) precheck(c command) (reply, bool) {
 	if c.Guild != cur.loc.Guild || c.Voice != cur.loc.Channel {
 		return reply{Text: "Join " + cur.name + " to request songs"}, true
 	}
-	if c.Name == "play" && strings.HasPrefix(c.What, "t:") {
-		if ch, ok := b.recall(c.What); !ok || ch.track == nil {
-			return reply{Text: "That choice expired; search again"}, true
-		}
+	if c.Name == "play" && b.req.Expired(c.What) {
+		return reply{Text: "That choice expired; search again"}, true
 	}
 	return reply{}, false
 }
@@ -177,7 +73,7 @@ func (b *Broadcaster) command(ctx context.Context, c command) reply {
 		if !ok {
 			return reply{Text: "Nothing is playing"}
 		}
-		s := fmt.Sprintf("%s (%s / %s)", trackLabel(t), clock(pos), clock(t.Duration))
+		s := fmt.Sprintf("%s (%s / %s)", requests.TrackLabel(t), requests.Clock(pos), requests.Clock(t.Duration))
 		if name != "" {
 			s += ", asked by " + name
 		}
@@ -185,10 +81,10 @@ func (b *Broadcaster) command(ctx context.Context, c command) reply {
 	case "queue":
 		var lines []string
 		if t, _, name, ok := b.cfg.Player.Current(); ok {
-			lines = append(lines, "Now: "+withName(trackLabel(t), name))
+			lines = append(lines, "Now: "+withName(requests.TrackLabel(t), name))
 		}
 		for i, u := range b.cfg.Player.Upcoming(10) {
-			lines = append(lines, fmt.Sprintf("%d. %s", i+1, withName(trackLabel(u.Track), u.Name)))
+			lines = append(lines, fmt.Sprintf("%d. %s", i+1, withName(requests.TrackLabel(u.Track), u.Name)))
 		}
 		var waiting []string
 		for _, l := range b.cfg.Player.Lanes() {
@@ -214,54 +110,10 @@ func withName(label, name string) string {
 	return label + " — " + name
 }
 
-func clock(d time.Duration) string {
-	s := int(d.Round(time.Second).Seconds())
-	return fmt.Sprintf("%d:%02d", s/60, s%60)
-}
-
 func (b *Broadcaster) play(ctx context.Context, c command) reply {
-	var ts []library.Track
-	var label string
-	kind, id, hasPrefix := strings.Cut(c.What, ":")
-	switch {
-	case hasPrefix && kind == "t":
-		ch, ok := b.recall(c.What)
-		if !ok || ch.track == nil {
-			return reply{Text: "That choice expired; search again"}
-		}
-		ts, label = []library.Track{*ch.track}, ch.label
-	case hasPrefix && kind == "a":
-		got, err := b.cfg.Library.AlbumTracks(ctx, id)
-		if err != nil {
-			return reply{Text: "Couldn't fetch that: " + err.Error()}
-		}
-		ts, label = got, b.labelOr(c.What, firstAlbum(got))
-	case hasPrefix && kind == "p":
-		got, err := b.cfg.Library.PlaylistTracks(ctx, id)
-		if err != nil {
-			return reply{Text: "Couldn't fetch that: " + err.Error()}
-		}
-		ts, label = got, b.labelOr(c.What, b.playlistName(ctx, id))
-	default: // typed without picking from autocomplete: rank the hits against the words
-		res, err := b.cfg.Library.Search(ctx, c.What)
-		if err != nil {
-			return reply{Text: "Couldn't fetch that: " + err.Error()}
-		}
-		if len(res.Tracks) == 0 {
-			return reply{Text: fmt.Sprintf("Nothing found for %q", c.What)}
-		}
-		best, score := bestMatch(c.What, res.Tracks)
-		if score < matchFloor {
-			var opts []string
-			for _, t := range res.Tracks[:min(3, len(res.Tracks))] {
-				opts = append(opts, trackLabel(t))
-			}
-			return reply{Text: fmt.Sprintf("Nothing close to %q; pick from the list: %s", c.What, strings.Join(opts, "; "))}
-		}
-		ts, label = []library.Track{best}, trackLabel(best)
-	}
-	if len(ts) == 0 {
-		return reply{Text: fmt.Sprintf("Nothing found for %q", c.What)}
+	ts, label, refusal := b.req.Resolve(ctx, c.What)
+	if refusal != "" {
+		return reply{Text: refusal}
 	}
 	var n int
 	var err error
@@ -284,76 +136,7 @@ func (b *Broadcaster) play(ctx context.Context, c command) reply {
 	return reply{Text: fmt.Sprintf("%s added %s (%d songs)", c.UserName, label, len(ts)), Public: true}
 }
 
-// matchFloor is the share of the typed words a hit must contain to be
-// queued without a pick; below it the asker is shown the choices instead.
-const matchFloor = 0.6
-
-var stopwords = map[string]bool{"the": true, "and": true, "of": true, "in": true, "on": true, "to": true, "is": true, "it": true, "my": true, "me": true, "you": true, "your": true, "for": true, "with": true}
-
-// words lowercases, strips punctuation and drops the little words that
-// every title shares, so "god is a woman" is judged on god and woman.
-func words(s string) []string {
-	var out []string
-	for _, w := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r > 127)
-	}) {
-		if len(w) > 2 && !stopwords[w] {
-			out = append(out, w)
-		}
-	}
-	return out
-}
-
-// bestMatch is the hit whose artist and title cover most of the typed
-// words, and that share; ties keep the server's order.
-func bestMatch(query string, ts []library.Track) (library.Track, float64) {
-	q := words(query)
-	if len(q) == 0 {
-		return ts[0], 1
-	}
-	best, bestScore := ts[0], -1.0
-	for _, t := range ts {
-		have := map[string]bool{}
-		for _, w := range words(t.Artist + " " + t.Title) {
-			have[w] = true
-		}
-		hit := 0
-		for _, w := range q {
-			if have[w] {
-				hit++
-			}
-		}
-		if score := float64(hit) / float64(len(q)); score > bestScore {
-			best, bestScore = t, score
-		}
-	}
-	return best, bestScore
-}
-
-func (b *Broadcaster) labelOr(value, fallback string) string {
-	if ch, ok := b.recall(value); ok {
-		return ch.label
-	}
-	return fallback
-}
-
-// playlistName finds a playlist's name by ID for the reply; a listing
-// error leaves a generic label rather than failing the request.
-func (b *Broadcaster) playlistName(ctx context.Context, id string) string {
-	ps, err := b.cfg.Library.Playlists(ctx)
-	if err == nil {
-		for _, p := range ps {
-			if p.ID == id {
-				return p.Name
-			}
-		}
-	}
-	return "the playlist"
-}
-
-func firstAlbum(ts []library.Track) string {
-	if len(ts) > 0 && ts[0].Album != "" {
-		return ts[0].Album
-	}
-	return "the album"
+// complete answers /play autocomplete.
+func (b *Broadcaster) complete(ctx context.Context, q string) []discord.AutocompleteChoice {
+	return b.req.Complete(ctx, q)
 }
