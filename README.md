@@ -2,6 +2,8 @@
 
 A terminal music player drawn in dots. Plays your Plex or Navidrome library, Winamp-shaped, with four visualizers drawn in braille, in any modern terminal.
 
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-support%20the%20build-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/bradycole)
+
 ![dotamp playing with the oscilloscope view](docs/scope.gif)
 
 | Spectrum bars | Spectrogram |
@@ -179,3 +181,7 @@ Pure Go, no cgo, on every platform. Discord support uses disgo, dave-go (DAVE en
 ## License
 
 MIT
+
+## Support
+
+dotamp is free and will stay that way. If it has become the thing you play music with, you can [buy the next round on Ko-fi](https://ko-fi.com/bradycole). Issues and pull requests are just as welcome.
