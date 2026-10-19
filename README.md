@@ -95,11 +95,11 @@ The bot does nothing until you press `b`; dotamp runs normally with no Discord s
 
 ### Requests from the room
 
-Set `"commands": true` in the `discord` block and the bot answers three slash commands in any server it is in, for people in the voice channel it is playing to:
+Set `"commands": true` in the `discord` block and the bot answers `/dotamp` with three subcommands in any server it is in, for people in the voice channel it is playing to:
 
-- `/play <what>` adds a track, album or playlist from your library; autocomplete searches as they type. The reply is public so the room sees who added what.
-- `/np` says what is playing and who asked for it.
-- `/queue` lists what is coming, with names.
+- `/dotamp play <what>` adds a track, album or playlist from your library; autocomplete searches as they type. The reply is public so the room sees who added what.
+- `/dotamp np` says what is playing and who asked for it.
+- `/dotamp queue` lists what is coming, with names.
 
 Requests are fair by construction: each person gets a lane, and the lanes take turns with your own queue, one song each. Forty requests from one person just fill that person's lane. `max_pending_per_user` caps a lane if you want one (0 = unlimited). Requested songs show the requester's name in the Queue tab, and a Requests section under the queue shows who is waiting. `c` clears the queue and every lane.
 

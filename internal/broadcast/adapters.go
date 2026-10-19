@@ -9,15 +9,27 @@ import (
 	"github.com/disgoorg/disgo/rest"
 )
 
-// commandDefs is what the bot registers on each server.
+// commandDefs is what the bot registers on each server: one /dotamp
+// command, so its subcommands never share a name with another bot's.
 func commandDefs() []discord.ApplicationCommandCreate {
 	return []discord.ApplicationCommandCreate{
-		discord.SlashCommandCreate{Name: "play", Description: "Add a track, album or playlist to the queue",
-			Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
-				Name: "what", Description: "Search the DJ's library", Required: true, Autocomplete: true}}},
-		discord.SlashCommandCreate{Name: "np", Description: "What is playing"},
-		discord.SlashCommandCreate{Name: "queue", Description: "What is coming up and who asked"},
+		discord.SlashCommandCreate{Name: "dotamp", Description: "Requests for the DJ's dotamp broadcast",
+			Options: []discord.ApplicationCommandOption{
+				discord.ApplicationCommandOptionSubCommand{Name: "play", Description: "Add a track, album or playlist to the queue",
+					Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
+						Name: "what", Description: "Search the DJ's library", Required: true, Autocomplete: true}}},
+				discord.ApplicationCommandOptionSubCommand{Name: "np", Description: "What is playing"},
+				discord.ApplicationCommandOptionSubCommand{Name: "queue", Description: "What is coming up and who asked"},
+			}},
 	}
+}
+
+// commandName is the subcommand of /dotamp, or "" for anything else.
+func commandName(top string, sub *string) string {
+	if top != "dotamp" || sub == nil {
+		return ""
+	}
+	return *sub
 }
 
 // onCommand turns a slash command into a command for the core and sends
@@ -36,7 +48,10 @@ func (b *Broadcaster) onCommand(e *events.ApplicationCommandInteractionCreate) {
 	if m := e.Member(); m != nil {
 		name = m.EffectiveName()
 	}
-	c := command{Name: data.CommandName(), UserID: user.ID.String(), UserName: name, Guild: *e.GuildID()}
+	c := command{Name: commandName(data.CommandName(), data.SubCommandName), UserID: user.ID.String(), UserName: name, Guild: *e.GuildID()}
+	if c.Name == "" {
+		return
+	}
 	if c.Name == "play" {
 		c.What = data.String("what")
 	}
@@ -83,6 +98,9 @@ func (b *Broadcaster) onCommand(e *events.ApplicationCommandInteractionCreate) {
 
 func (b *Broadcaster) onAutocomplete(e *events.AutocompleteInteractionCreate) {
 	if !b.cfg.Commands {
+		return
+	}
+	if commandName(e.Data.CommandName, e.Data.SubCommandName) != "play" {
 		return
 	}
 	q := e.Data.String("what")
