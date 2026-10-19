@@ -96,6 +96,9 @@ func run(cfgPath string, log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("plex at %s: %w", cfg.Plex.URL, err)
 		}
+		if _, err := c.MusicSection(ctx); err != nil { // sets the section every browse call uses
+			return fmt.Errorf("plex at %s: %w", cfg.Plex.URL, err)
+		}
 		c.SetServer(mid, "Ressikan Files")
 		lib.Add(multi.Server{ID: mid, Name: "Ressikan Files", Owned: true, Via: "local"}, c)
 	}
