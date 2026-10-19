@@ -70,7 +70,7 @@ func (p ctlPlayer) Request(ctx context.Context, name string, ts []library.Track)
 	return p.r.Request(ctx, "ctl:"+name, name, ts)
 }
 func (p ctlPlayer) Remove(ctx context.Context, i int) error { return p.r.Controller().Remove(ctx, i) }
-func (p ctlPlayer) Clear() int                              { return p.r.Controller().Clear() }
+func (p ctlPlayer) Clear() int                              { return p.r.Clear() }
 func (p ctlPlayer) Next(ctx context.Context) error          { return p.r.Controller().Next(ctx) }
 func (p ctlPlayer) Prev(ctx context.Context) error          { return p.r.Controller().Prev(ctx) }
 func (p ctlPlayer) TogglePause()                            { p.r.Controller().TogglePause() }

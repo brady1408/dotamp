@@ -72,6 +72,7 @@ type Room struct {
 	voteFor   string // track ID the votes are for
 	idleSince time.Time
 	failures  int
+	held      bool // cleared on purpose: no radio until someone requests
 	recent    []history.Entry
 	filling   atomic.Bool
 }
@@ -179,7 +180,7 @@ func (r *Room) leaveLocked(ctx context.Context) int {
 	}
 	stop, conn := r.stop, r.conn
 	r.channel, r.name, r.conn, r.stop = 0, "", nil, nil
-	r.autoplay = r.cfg.Autoplay
+	r.autoplay, r.held = r.cfg.Autoplay, false
 	r.mu.Unlock()
 	close(stop)
 	conn.Close(ctx)
@@ -209,7 +210,7 @@ func (r *Room) Request(ctx context.Context, by, name string, ts []library.Track)
 	}
 	r.ctrl.DropRequests(radio.RadioBy)
 	r.mu.Lock()
-	r.failures = 0
+	r.failures, r.held = 0, false
 	r.mu.Unlock()
 	return r.ctrl.Request(context.WithoutCancel(ctx), by, name, ts)
 }
@@ -250,6 +251,18 @@ func (r *Room) ensureNext(ctx context.Context) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	r.fill(context.WithoutCancel(ctx))
+}
+
+// Clear empties the queue and every lane, and holds the radio until the
+// next request: a clear is a wish for something fresh, not more radio.
+// It returns the requests dropped.
+func (r *Room) Clear() int {
+	r.commit.Lock()
+	defer r.commit.Unlock()
+	r.mu.Lock()
+	r.held = true
+	r.mu.Unlock()
+	return r.ctrl.Clear()
 }
 
 func (r *Room) SetAutoplay(on bool) {
@@ -320,10 +333,10 @@ func (r *Room) fill(ctx context.Context) {
 	}
 	defer r.filling.Store(false)
 	r.mu.Lock()
-	ch, on, fails := r.channel, r.autoplay, r.failures
+	ch, on, fails, held := r.channel, r.autoplay, r.failures, r.held
 	recent := append([]history.Entry(nil), r.recent...)
 	r.mu.Unlock()
-	if ch == 0 || !on || fails >= 3 || r.waiting() {
+	if ch == 0 || !on || held || fails >= 3 || r.waiting() {
 		return
 	}
 	r.commit.Lock()
@@ -341,7 +354,7 @@ func (r *Room) fill(ctx context.Context) {
 	if err == nil {
 		r.commit.Lock()
 		r.mu.Lock()
-		stale := r.gen != gen || r.channel != ch || !r.autoplay
+		stale := r.gen != gen || r.channel != ch || !r.autoplay || r.held
 		r.mu.Unlock()
 		if stale || r.waiting() {
 			r.commit.Unlock()

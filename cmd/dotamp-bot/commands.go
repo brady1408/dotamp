@@ -172,8 +172,7 @@ func (b *houseBot) run(ctx context.Context, r *room.Room, g snowflake.ID, cmd st
 		}
 		return reply{Text: "Paused by " + name, Public: true}
 	case "clear":
-		n := ctrl.Clear()
-		r.SetAutoplay(r.Autoplay()) // refill when autoplay is on
+		n := r.Clear() // the radio waits for the next request
 		if n > 0 {
 			return reply{Text: fmt.Sprintf("Queue cleared (and %d requests)", n), Public: true}
 		}

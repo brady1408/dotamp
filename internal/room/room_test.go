@@ -363,3 +363,20 @@ func TestLibraryDownWithHistoryPostsOnce(t *testing.T) {
 		t.Fatalf("posts = %v", posts)
 	}
 }
+
+func TestClearHoldsTheRadioUntilTheNextRequest(t *testing.T) {
+	h := newHarness(t)
+	h.r.Join(ctx, 10, "a-team")
+	waitFor(t, func() bool { _, ok := h.current(); return ok })
+	h.r.Clear()
+	for i := 0; i < 3; i++ {
+		h.r.Tick(ctx)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if _, ok := h.current(); ok || len(h.r.Controller().Tracks()) != 0 {
+		t.Fatalf("radio refilled after a clear: %v", h.r.Controller().Tracks())
+	}
+	h.r.Request(ctx, "u1", "Alice", []library.Track{{ID: "fresh", Title: "Fresh", Duration: 2 * time.Second}})
+	waitFor(t, func() bool { cur, ok := h.current(); return ok && cur.ID == "fresh" })
+	waitFor(t, func() bool { return len(radioAhead(h)) > 0 }) // the radio follows the fresh request
+}
