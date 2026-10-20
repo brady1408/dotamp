@@ -342,15 +342,15 @@ func (r *Room) fill(ctx context.Context) {
 	r.commit.Lock()
 	gen := r.gen
 	r.commit.Unlock()
+	seed := uint64(time.Now().UnixNano())
+	rng := rand.New(rand.NewPCG(seed, seed>>1))
 	var last *library.Track
 	if cur, ok := r.ctrl.Current(); ok {
 		last = &cur
-	} else if len(recent) > 0 {
-		t := recent[len(recent)-1].Track
-		last = &t
+	} else {
+		last = favourite(recent, r.cfg.Deps.Now(), rng)
 	}
-	seed := uint64(time.Now().UnixNano())
-	t, err := radio.Pick(ctx, r.cfg.Library, radio.Input{Last: last, History: recent, Queue: r.ctrl.Tracks(), Now: r.cfg.Deps.Now(), Rand: rand.New(rand.NewPCG(seed, seed>>1))})
+	t, err := radio.Pick(ctx, r.cfg.Library, radio.Input{Last: last, History: recent, Queue: r.ctrl.Tracks(), Now: r.cfg.Deps.Now(), Rand: rng})
 	if err == nil {
 		r.commit.Lock()
 		r.mu.Lock()
@@ -377,6 +377,24 @@ func (r *Room) fill(ctx context.Context) {
 	r.mu.Lock()
 	r.failures = 0
 	r.mu.Unlock()
+}
+
+// favourite is where a cold radio starts: one of the room's ten best
+// played-through songs, so a stray last line (a skipped radio pick, say)
+// never sets the tone for the night. Nil when the room has no history.
+func favourite(es []history.Entry, now time.Time, rng *rand.Rand) *library.Track {
+	var top []library.Track
+	for _, s := range history.Score(es, now) {
+		if s.Score <= 0 || len(top) == 10 {
+			break
+		}
+		top = append(top, s.Track)
+	}
+	if len(top) == 0 {
+		return nil
+	}
+	t := top[rng.IntN(len(top))]
+	return &t
 }
 
 // ended logs a finished track while joined.

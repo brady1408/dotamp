@@ -40,6 +40,8 @@ type lib struct {
 	similar []library.Track
 	fail    atomic.Bool
 	delay   atomic.Int64 // Similar sleeps this long (ns)
+	first   sync.Once
+	asked   atomic.Value // the first track Similar was asked about (library.Track)
 }
 
 func (l *lib) Stream(context.Context, library.Track) (library.Stream, error) {
@@ -48,7 +50,8 @@ func (l *lib) Stream(context.Context, library.Track) (library.Stream, error) {
 	}
 	return library.Stream{URL: l.url + "/sine440-44k.flac", Codec: "flac"}, nil
 }
-func (l *lib) Similar(context.Context, library.Track, int) ([]library.Track, error) {
+func (l *lib) Similar(_ context.Context, t library.Track, _ int) ([]library.Track, error) {
+	l.first.Do(func() { l.asked.Store(t) })
 	time.Sleep(time.Duration(l.delay.Load()))
 	if l.fail.Load() {
 		return nil, errors.New("plex down")
@@ -379,4 +382,23 @@ func TestClearHoldsTheRadioUntilTheNextRequest(t *testing.T) {
 	h.r.Request(ctx, "u1", "Alice", []library.Track{{ID: "fresh", Title: "Fresh", Duration: 2 * time.Second}})
 	waitFor(t, func() bool { cur, ok := h.current(); return ok && cur.ID == "fresh" })
 	waitFor(t, func() bool { return len(radioAhead(h)) > 0 }) // the radio follows the fresh request
+}
+
+func TestAColdJoinStartsFromAFavouriteNotTheLastLine(t *testing.T) {
+	now := time.Now()
+	h := newHarnessWith(t, func(dir string) {
+		w := history.NewWriter(dir)
+		for i := 0; i < 3; i++ { // the room plays this through, night after night
+			w.Append("1", history.Entry{At: now.Add(-time.Duration(48+i) * time.Hour), Played: 240, Name: "Necrious", By: "n1",
+				Track: library.Track{ID: "fav", Title: "Fav", Artist: "Linkin Park", Duration: 240 * time.Second}})
+		}
+		// the last line is a radio pick that was skipped at once
+		w.Append("1", history.Entry{At: now.Add(-time.Hour), Played: 10, By: radio.RadioBy, Name: radio.RadioBy,
+			Track: library.Track{ID: "junk", Title: "Junk", Artist: "Pitbull", Duration: 200 * time.Second}})
+	})
+	h.r.Join(ctx, 10, "a-team")
+	waitFor(t, func() bool { v := h.lib.asked.Load(); return v != nil })
+	if got := h.lib.asked.Load().(library.Track); got.ID != "fav" {
+		t.Fatalf("radio started from %q, not the room's favourite", got.ID)
+	}
 }
