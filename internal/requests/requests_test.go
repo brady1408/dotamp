@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/disgoorg/disgo/discord"
+
 	"github.com/brady1408/dotamp/internal/library"
 )
 
@@ -65,3 +67,28 @@ func TestResolveRefusesAPoorTypedMatch(t *testing.T) {
 		t.Fatalf("refusal = %q", refusal)
 	}
 }
+
+func TestCompleteLabelsTellVersionsApart(t *testing.T) {
+	c := New(func() library.Library { return versions{} })
+	var names []string
+	for _, ch := range c.Complete(context.Background(), "beach") {
+		names = append(names, ch.(discord.AutocompleteChoiceString).Name)
+	}
+	want := []string{
+		"♪ Take Me to the Beach · Imagine Dragons — LOOM",
+		"♪ Take Me to the Beach · Imagine Dragons feat. Ado — Take Me to the Beach",
+	}
+	if strings.Join(names, " | ") != strings.Join(want, " | ") {
+		t.Fatalf("names = %q", names)
+	}
+}
+
+type versions struct{ library.Library }
+
+func (versions) Search(context.Context, string) (library.SearchResult, error) {
+	return library.SearchResult{Tracks: []library.Track{
+		{ID: "s:1", Title: "Take Me to the Beach", Artist: "Imagine Dragons", Album: "LOOM"},
+		{ID: "s:2", Title: "Take Me to the Beach", Artist: "Imagine Dragons feat. Ado", Album: "Take Me to the Beach"},
+	}}, nil
+}
+func (versions) Playlists(context.Context) ([]library.Playlist, error) { return nil, nil }

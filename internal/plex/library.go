@@ -169,6 +169,9 @@ func (c *Client) toTrack(m metadata) library.Track {
 	t := library.Track{ID: m.RatingKey, Title: m.Title, Index: m.Index, Album: m.ParentTitle,
 		AlbumID: m.ParentRatingKey, Artist: m.GrandparentTitle, Duration: time.Duration(m.Duration) * time.Millisecond,
 		Server: c.serverID}
+	if m.OriginalTitle != "" { // e.g. "Imagine Dragons feat. Ado" on a single by the band
+		t.Artist = m.OriginalTitle
+	}
 	if len(m.Media) > 0 {
 		md := m.Media[0]
 		t.Codec, t.Container, t.Bitrate = md.AudioCodec, md.Container, md.Bitrate

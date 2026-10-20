@@ -30,6 +30,7 @@ type metadata struct {
 	ParentTitle      string  `json:"parentTitle"`
 	ParentRatingKey  string  `json:"parentRatingKey"`
 	GrandparentTitle string  `json:"grandparentTitle"`
+	OriginalTitle    string  `json:"originalTitle"` // the track's own artist when it differs from the album's
 	Year             int     `json:"year"`
 	LeafCount        int     `json:"leafCount"`
 	AddedAt          int64   `json:"addedAt"`

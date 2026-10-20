@@ -162,7 +162,11 @@ func (c *Core) Complete(ctx context.Context, query string) []discord.Autocomplet
 	}
 	for i := range res.Tracks {
 		t := res.Tracks[i]
-		add("♪ "+TrackLabel(t), "t:"+t.ID, TrackLabel(t), &t)
+		shown := "♪ " + TrackLabel(t)
+		if t.Album != "" { // two versions of a song differ by album as often as by artist
+			shown += " — " + t.Album
+		}
+		add(shown, "t:"+t.ID, TrackLabel(t), &t)
 	}
 	for _, a := range res.Albums {
 		add("◎ "+a.Title+" · "+a.Artist, "a:"+a.ID, a.Title, nil)

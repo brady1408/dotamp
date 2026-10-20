@@ -28,3 +28,12 @@ func TestSimilarAsksForNearest(t *testing.T) {
 		t.Fatalf("path = %s", path)
 	}
 }
+
+func TestTrackArtistComesFromOriginalTitle(t *testing.T) {
+	c := New("http://x", "tok", "cid")
+	feat := c.toTrack(metadata{RatingKey: "255289", Title: "Take Me to the Beach", GrandparentTitle: "Imagine Dragons", OriginalTitle: "Imagine Dragons feat. Ado"})
+	plain := c.toTrack(metadata{RatingKey: "159561", Title: "Take Me to the Beach", GrandparentTitle: "Imagine Dragons"})
+	if feat.Artist != "Imagine Dragons feat. Ado" || plain.Artist != "Imagine Dragons" {
+		t.Fatalf("artists = %q, %q", feat.Artist, plain.Artist)
+	}
+}
