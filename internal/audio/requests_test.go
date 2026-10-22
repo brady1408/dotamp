@@ -350,3 +350,25 @@ func TestTrackStartIsReportedWithTheRequester(t *testing.T) {
 		t.Fatalf("starts = %v", got)
 	}
 }
+
+func TestASecondPrevSoonAfterARestartGoesBack(t *testing.T) {
+	old := restartAfter
+	restartAfter = 300 * time.Millisecond // the 2 s fixture is shorter than the real 3 s
+	t.Cleanup(func() { restartAfter = old })
+	srv := fixtureServer(t)
+	eng := NewEngine(NewSilentOutput(OutRate), OutRate) // a clock that moves in real time
+	t.Cleanup(eng.Close)
+	c := NewController(&fakeLib{url: srv.URL}, eng, func(string) {})
+	c.Enqueue(named("a", "b")...)
+	_ = c.Jump(ctx, 1)
+	waitFor(t, func() bool { return c.eng.Position() > 500*time.Millisecond })
+	_ = c.Prev(ctx) // restart b
+	if cur, _ := c.Current(); cur.ID != "b" {
+		t.Fatalf("first p moved to %s", cur.ID)
+	}
+	waitFor(t, func() bool { return c.eng.Position() > 500*time.Millisecond }) // past the restart window by the clock
+	_ = c.Prev(ctx)
+	if cur, _ := c.Current(); cur.ID != "a" {
+		t.Fatalf("second p soon after a restart stayed on %s", cur.ID)
+	}
+}

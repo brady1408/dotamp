@@ -12,6 +12,14 @@ import (
 
 const prefetchAhead = 10 * time.Second
 
+// restartAfter is how far into a song p restarts it instead of going back.
+var restartAfter = 3 * time.Second
+
+// backWindow: a p this soon after p restarted a song goes to the previous
+// one, however far the restarted song has played. The deck takes a moment
+// to show the restart, so people press again a beat later.
+const backWindow = 5 * time.Second
+
 // Controller joins the queue, the library, and the engine: it opens streams,
 // advances on track end, prefetches the next track, and reports skips.
 type Controller struct {
@@ -34,6 +42,7 @@ type Controller struct {
 	reported  bool // the current track's end has been reported
 	onEnd     func(t library.Track, played time.Duration, by, name string)
 	onStart   func(t library.Track, by, name string)
+	restarted time.Time // when p last restarted the current song
 }
 
 func NewController(lib library.Library, eng *Engine, notify func(string)) *Controller {
@@ -387,10 +396,23 @@ func (c *Controller) Next(ctx context.Context) error {
 }
 
 func (c *Controller) Prev(ctx context.Context) error {
-	if c.eng.Position() > 3*time.Second || !c.queuePrev() {
+	c.mu.Lock()
+	again := !c.restarted.IsZero() && time.Since(c.restarted) < backWindow
+	c.mu.Unlock()
+	if !again && c.eng.Position() > restartAfter {
+		c.eng.Seek(0)
+		c.mu.Lock()
+		c.restarted = time.Now()
+		c.mu.Unlock()
+		return nil
+	}
+	if !c.queuePrev() {
 		c.eng.Seek(0)
 		return nil
 	}
+	c.mu.Lock()
+	c.restarted = time.Time{}
+	c.mu.Unlock()
 	return c.start(ctx)
 }
 
