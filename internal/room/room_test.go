@@ -8,6 +8,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -102,7 +105,15 @@ func newHarnessWith(t *testing.T, before func(dir string)) *harness {
 	if before != nil {
 		before(h.dir)
 	}
-	h.r = New(ctx, Config{Guild: 1, Library: h.lib, History: history.NewWriter(h.dir), HistoryDir: h.dir,
+	h.r = h.newRoom()
+	t.Cleanup(func() { h.r.Leave(context.Background()) })
+	return h
+}
+
+// newRoom builds a room over the harness's library, clock and directories,
+// as a restarted bot would.
+func (h *harness) newRoom() *Room {
+	return New(ctx, Config{Guild: 1, Library: h.lib, History: history.NewWriter(h.dir), HistoryDir: h.dir, StateDir: filepath.Join(h.dir, "state"),
 		Autoplay: true, IdleLeave: 5 * time.Minute, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Deps: Deps{
 			Open: func(context.Context, snowflake.ID) (Conn, error) {
@@ -118,8 +129,6 @@ func newHarnessWith(t *testing.T, before func(dir string)) *harness {
 			Post:      func(_ snowflake.ID, m string) { h.mu.Lock(); h.posts = append(h.posts, m); h.mu.Unlock() },
 			Now:       func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now },
 		}})
-	t.Cleanup(func() { h.r.Leave(context.Background()) })
-	return h
 }
 
 func waitFor(t *testing.T, cond func() bool) {
@@ -400,5 +409,136 @@ func TestAColdJoinStartsFromAFavouriteNotTheLastLine(t *testing.T) {
 	waitFor(t, func() bool { v := h.lib.asked.Load(); return v != nil })
 	if got := h.lib.asked.Load().(library.Track); got.ID != "fav" {
 		t.Fatalf("radio started from %q, not the room's favourite", got.ID)
+	}
+}
+
+func (h *harness) stateFile() string { return filepath.Join(h.dir, "state", "1.json") }
+
+// playing joins and queues a requested song so there is something to save.
+func (h *harness) playing(t *testing.T) {
+	t.Helper()
+	h.r.Join(ctx, 10, "a-team")
+	waitFor(t, func() bool { _, ok := h.current(); return ok })
+	h.r.Request(ctx, "u1", "Alice", []library.Track{{ID: "req", Title: "Req", Duration: 2 * time.Second}, {ID: "req2", Title: "Req2", Duration: 2 * time.Second}})
+}
+
+func TestShutdownSavesAndKeepsTheQueue(t *testing.T) {
+	h := newHarness(t)
+	h.playing(t)
+	n := len(h.r.Controller().Tracks())
+	h.r.Shutdown(ctx)
+	if _, err := os.Stat(h.stateFile()); err != nil {
+		t.Fatalf("no state file: %v", err)
+	}
+	if len(h.r.Controller().Tracks()) != n {
+		t.Fatal("shutdown cleared the queue")
+	}
+	h.mu.Lock()
+	closed := h.conns[len(h.conns)-1].closed.Load()
+	h.mu.Unlock()
+	if closed == 0 {
+		t.Fatal("voice not closed on shutdown")
+	}
+}
+
+func TestResumeRejoinsAndPicksUp(t *testing.T) {
+	h := newHarness(t)
+	h.playing(t)
+	before := h.r.Controller().Snapshot()
+	cur := before.Tracks[before.Index]
+	h.r.Shutdown(ctx)
+	r2 := h.newRoom()
+	t.Cleanup(func() { r2.Leave(context.Background()) })
+	ok, err := r2.Resume(ctx)
+	if err != nil || !ok {
+		t.Fatalf("resume = %v %v", ok, err)
+	}
+	if ch, name := r2.Where(); ch != 10 || name != "a-team" {
+		t.Fatalf("rejoined %d %q", ch, name)
+	}
+	waitFor(t, func() bool { c, ok := r2.Controller().Current(); return ok && c.ID == cur.ID })
+	got := r2.Controller().Snapshot()
+	if len(got.Tracks) != len(before.Tracks) || got.Tags[before.Index+1] != before.Tags[before.Index+1] {
+		t.Fatalf("queue or requesters lost: %+v", got.Tags)
+	}
+	h.mu.Lock()
+	posts := strings.Join(h.posts, " | ")
+	h.mu.Unlock()
+	if !strings.Contains(posts, "Back, picking up "+cur.Title) {
+		t.Fatalf("posts = %q", posts)
+	}
+}
+
+func TestResumeWithNobodyKeepsTheQueueForJoin(t *testing.T) {
+	h := newHarness(t)
+	h.playing(t)
+	before := h.r.Controller().Snapshot()
+	h.r.Shutdown(ctx)
+	h.listeners.Store(0)
+	r2 := h.newRoom()
+	t.Cleanup(func() { r2.Leave(context.Background()) })
+	if ok, _ := r2.Resume(ctx); ok {
+		t.Fatal("rejoined an empty channel")
+	}
+	if ch, _ := r2.Where(); ch != 0 {
+		t.Fatal("joined anyway")
+	}
+	h.listeners.Store(2)
+	r2.Join(ctx, 11, "airwolf")
+	cur := before.Tracks[before.Index]
+	waitFor(t, func() bool { c, ok := r2.Controller().Current(); return ok && c.ID == cur.ID })
+}
+
+func TestStaleStateIsIgnored(t *testing.T) {
+	h := newHarness(t)
+	h.playing(t)
+	h.r.Shutdown(ctx)
+	h.mu.Lock()
+	h.now = h.now.Add(31 * time.Minute)
+	h.mu.Unlock()
+	r2 := h.newRoom()
+	t.Cleanup(func() { r2.Leave(context.Background()) })
+	if ok, _ := r2.Resume(ctx); ok || len(r2.Controller().Tracks()) != 0 {
+		t.Fatal("a stale state was resumed")
+	}
+}
+
+func TestCorruptStateIsSetAside(t *testing.T) {
+	h := newHarness(t)
+	os.MkdirAll(filepath.Dir(h.stateFile()), 0o700)
+	os.WriteFile(h.stateFile(), []byte("{not json"), 0o600)
+	if ok, err := h.r.Resume(ctx); ok || err != nil {
+		t.Fatalf("resume = %v %v", ok, err)
+	}
+	if _, err := os.Stat(h.stateFile() + ".bad"); err != nil {
+		t.Fatal("corrupt file not set aside")
+	}
+}
+
+func TestLeaveLeavesNothingToResume(t *testing.T) {
+	h := newHarness(t)
+	h.playing(t)
+	h.r.Save()
+	h.r.Leave(ctx)
+	r2 := h.newRoom()
+	t.Cleanup(func() { r2.Leave(context.Background()) })
+	if ok, _ := r2.Resume(ctx); ok || len(r2.Controller().Tracks()) != 0 {
+		t.Fatal("a deliberate leave came back")
+	}
+}
+
+func TestHoldSurvivesARestart(t *testing.T) {
+	h := newHarness(t)
+	h.playing(t)
+	h.r.Clear()
+	h.r.Request(ctx, "u1", "Alice", []library.Track{{ID: "solo", Title: "Solo", Duration: 2 * time.Second}})
+	h.r.Clear() // held again, empty queue, still in the channel
+	h.r.Shutdown(ctx)
+	r2 := h.newRoom()
+	t.Cleanup(func() { r2.Leave(context.Background()) })
+	r2.Resume(ctx)
+	time.Sleep(200 * time.Millisecond)
+	if _, ok := r2.Controller().Current(); ok {
+		t.Fatal("radio refilled after a restart that followed a clear")
 	}
 }

@@ -47,6 +47,7 @@ type Config struct {
 	Library    Library
 	History    *history.Writer
 	HistoryDir string
+	StateDir   string // where the resume state lives; "" turns saving off
 	Autoplay   bool
 	IdleLeave  time.Duration
 	Logger     *slog.Logger
@@ -73,6 +74,8 @@ type Room struct {
 	idleSince time.Time
 	failures  int
 	held      bool // cleared on purpose: no radio until someone requests
+	pending   bool // a resumed queue waits for the next Join to play it
+	dirty     chan struct{}
 	recent    []history.Entry
 	filling   atomic.Bool
 }
@@ -80,7 +83,7 @@ type Room struct {
 func New(ctx context.Context, cfg Config) *Room {
 	eng := audio.NewEngine(audio.NewSilentOutput(rate), rate)
 	eng.SetVolume(1)
-	r := &Room{cfg: cfg, eng: eng, autoplay: cfg.Autoplay}
+	r := &Room{cfg: cfg, eng: eng, autoplay: cfg.Autoplay, dirty: make(chan struct{}, 1)}
 	r.ctrl = audio.NewController(cfg.Library, eng, func(m string) { cfg.Logger.Info("room", "notice", m) })
 	if es, err := history.Read(cfg.HistoryDir, cfg.Guild.String()); err == nil {
 		r.recent = es
@@ -92,6 +95,8 @@ func New(ctx context.Context, cfg Config) *Room {
 		r.mu.Unlock()
 		go r.fill(ctx)
 	})
+	r.ctrl.SetChanged(r.markDirty)
+	go r.saver(ctx)
 	go r.ctrl.Run(ctx)
 	return r
 }
@@ -117,7 +122,17 @@ func (r *Room) Join(ctx context.Context, channel snowflake.ID, name string) erro
 	r.mu.Unlock()
 	go stream.Drain(stop, conn.UDP())
 	go r.run(stop, conn)
+	r.mu.Lock()
+	pending := r.pending
+	r.pending = false
+	r.mu.Unlock()
+	if pending {
+		if i := r.ctrl.Index(); i >= 0 {
+			_ = r.ctrl.Jump(context.WithoutCancel(ctx), i)
+		}
+	}
 	go r.fill(context.WithoutCancel(ctx))
+	r.markDirty()
 	return nil
 }
 
@@ -188,6 +203,7 @@ func (r *Room) leaveLocked(ctx context.Context) int {
 	r.gen++
 	n := r.ctrl.Clear() // after channel = 0, so the cut track is not logged
 	r.commit.Unlock()
+	r.forget()
 	return n
 }
 
@@ -262,13 +278,16 @@ func (r *Room) Clear() int {
 	r.mu.Lock()
 	r.held = true
 	r.mu.Unlock()
-	return r.ctrl.Clear()
+	n := r.ctrl.Clear()
+	r.markDirty()
+	return n
 }
 
 func (r *Room) SetAutoplay(on bool) {
 	r.mu.Lock()
 	r.autoplay, r.failures = on, 0
 	r.mu.Unlock()
+	r.markDirty()
 	if on {
 		go r.fill(context.Background())
 	}
@@ -307,6 +326,9 @@ func (r *Room) Tick(ctx context.Context) {
 		r.mu.Unlock()
 	}
 	r.fill(ctx)
+	if err := r.Save(); err != nil {
+		r.cfg.Logger.Warn("save state", "err", err)
+	}
 }
 
 // waiting reports whether something will play next without the radio:
