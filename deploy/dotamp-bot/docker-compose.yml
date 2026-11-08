@@ -9,3 +9,10 @@ services:
       - "8097:8097" # web listener, behind pfSense HAProxy as listen.bradycole.com
     volumes:
       - ./config:/config
+
+# Plex lists this subnet as LAN (LanNetworksBandwidth), so it must not change.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.31.0.0/16
