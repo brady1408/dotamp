@@ -89,7 +89,7 @@ func TestRecentAlbumsPagesAndSorts(t *testing.T) {
 }
 
 func TestAlbumTracksAndStream(t *testing.T) {
-	s, _ := serve(t, map[string]string{"/library/metadata/200/children": "children.json"})
+	s, _ := serve(t, map[string]string{"/library/metadata/200/children": "children.json", "/music/:/transcode/universal/decision": "decision.json"})
 	c := New(s.URL, "tok", "cid")
 	tracks, err := c.AlbumTracks(context.Background(), "200")
 	if err != nil || len(tracks) != 2 {
@@ -168,7 +168,7 @@ func TestItemsCarryServerID(t *testing.T) {
 }
 
 func TestStreamTranscodesOnlyWhenTheRelayCannotCarryTheFile(t *testing.T) {
-	s, _ := serve(t, map[string]string{"/library/metadata/200/children": "children.json"})
+	s, _ := serve(t, map[string]string{"/library/metadata/200/children": "children.json", "/music/:/transcode/universal/decision": "decision.json"})
 	c := New(s.URL, "tok", "cid")
 	tracks, _ := c.AlbumTracks(context.Background(), "200")
 	flac := tracks[0] // 978 kbps
@@ -200,5 +200,50 @@ func TestStreamTranscodesOnlyWhenTheRelayCannotCarryTheFile(t *testing.T) {
 	st, _ = c.Stream(context.Background(), flac)
 	if st.Codec != "flac" {
 		t.Fatalf("local stays original: %+v", st)
+	}
+}
+
+// Plex refuses start.mp3 (HTTP 400) unless a decision request with the same
+// session and a client profile came first, and the profile must ask for an
+// MP3 container or Plex answers with Matroska.
+func TestTranscodeAsksForADecisionFirst(t *testing.T) {
+	s, seen := serve(t, map[string]string{
+		"/library/metadata/200/children":        "children.json",
+		"/music/:/transcode/universal/decision": "decision.json",
+	})
+	c := New(s.URL, "tok", "cid")
+	tracks, _ := c.AlbumTracks(context.Background(), "200")
+	*seen = nil
+	st, err := c.Stream(context.Background(), tracks[1]) // AAC: always transcoded
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*seen) != 1 || (*seen)[0].URL.Path != "/music/:/transcode/universal/decision" {
+		t.Fatalf("want one decision request, got %d", len(*seen))
+	}
+	d := (*seen)[0]
+	sess := d.URL.Query().Get("session")
+	if sess == "" || !strings.Contains(st.URL, "session="+sess) {
+		t.Fatalf("decision session %q must match the stream URL %s", sess, st.URL)
+	}
+	for _, h := range []map[string]string{{"X-Plex-Client-Profile-Name": d.Header.Get("X-Plex-Client-Profile-Name"),
+		"X-Plex-Client-Profile-Extra": d.Header.Get("X-Plex-Client-Profile-Extra")}, st.Headers} {
+		if h["X-Plex-Client-Profile-Name"] != "Generic" || !strings.Contains(h["X-Plex-Client-Profile-Extra"], "container=mp3") {
+			t.Fatalf("decision and stream need the MP3 profile headers: %v", h)
+		}
+	}
+	// A second stream is a fresh transcode session.
+	st2, _ := c.Stream(context.Background(), tracks[1])
+	if strings.Contains(st2.URL, "session="+sess) {
+		t.Fatal("each stream needs its own session")
+	}
+}
+
+func TestTranscodeFailsWhenTheDecisionFails(t *testing.T) {
+	s, _ := serve(t, map[string]string{"/library/metadata/200/children": "children.json"})
+	c := New(s.URL, "tok", "cid")
+	tracks, _ := c.AlbumTracks(context.Background(), "200")
+	if _, err := c.Stream(context.Background(), tracks[1]); err == nil {
+		t.Fatal("a refused decision must surface as an error")
 	}
 }

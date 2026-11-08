@@ -2,7 +2,12 @@ package plex
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strconv"
 	"time"
@@ -136,11 +141,44 @@ func (c *Client) Stream(ctx context.Context, t library.Track) (library.Stream, e
 		}
 		bitrate = 320 // a codec we cannot decode: let the server transcode at full quality
 	}
+	return c.transcode(ctx, t, bitrate)
+}
+
+// mp3Profile makes Plex's Generic client profile emit MP3 in an MP3
+// container; without it Plex picks no profile and refuses the transcode, and
+// the Plexamp profile answers in Matroska.
+const mp3Profile = "add-transcode-target(type=musicProfile&context=streaming&protocol=http&container=mp3&audioCodec=mp3)"
+
+// transcode asks Plex for a decision first: start.mp3 is refused (HTTP 400)
+// for a session that has none.
+func (c *Client) transcode(ctx context.Context, t library.Track, bitrate int) (library.Stream, error) {
+	sess := make([]byte, 16)
+	_, _ = rand.Read(sess)
 	q := url.Values{
 		"path": {"/library/metadata/" + t.ID}, "mediaIndex": {"0"}, "partIndex": {"0"},
 		"protocol": {"http"}, "audioCodec": {"mp3"}, "musicBitrate": {strconv.Itoa(bitrate)},
+		"directPlay": {"0"}, "directStream": {"0"}, "session": {hex.EncodeToString(sess)},
 	}
-	return library.Stream{URL: c.server + "/music/:/transcode/universal/start.mp3?" + q.Encode(), Codec: "mp3", Headers: c.StreamHeaders()}, nil
+	headers := c.StreamHeaders()
+	headers["X-Plex-Client-Profile-Name"] = "Generic"
+	headers["X-Plex-Client-Profile-Extra"] = mp3Profile
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.server+"/music/:/transcode/universal/decision?"+q.Encode(), nil)
+	if err != nil {
+		return library.Stream{}, err
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return library.Stream{}, err
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return library.Stream{}, fmt.Errorf("plex: transcode decision for %s: HTTP %d", t.ID, resp.StatusCode)
+	}
+	return library.Stream{URL: c.server + "/music/:/transcode/universal/start.mp3?" + q.Encode(), Codec: "mp3", Headers: headers}, nil
 }
 
 // transcodeBitrate decides whether the original file can be sent as is. It
