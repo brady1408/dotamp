@@ -17,6 +17,8 @@ type fakeLib struct {
 	fails map[string]int // track ID -> remaining failures to inject
 	mu    sync.Mutex
 	opens []string // track IDs in the order Stream was asked for them
+	// onStream runs inside Stream, standing in for a slow network open
+	onStream func(id string)
 }
 
 func (f *fakeLib) streamOpens() []string {
@@ -50,7 +52,11 @@ func (f *fakeLib) DeletePlaylist(context.Context, string) error                 
 func (f *fakeLib) Stream(_ context.Context, t library.Track) (library.Stream, error) {
 	f.mu.Lock()
 	f.opens = append(f.opens, t.ID)
+	hook := f.onStream
 	f.mu.Unlock()
+	if hook != nil {
+		hook(t.ID)
+	}
 	if f.fails[t.ID] > 0 {
 		f.fails[t.ID]--
 		return library.Stream{URL: f.url + "/missing.flac", Codec: "flac"}, nil

@@ -191,7 +191,7 @@ func (c *Controller) RemoveMine(ctx context.Context, by string, k int, id string
 		return err
 	}
 	if refed {
-		c.dropPrefetch() // the DJ's next may already be queued in the engine
+		c.dropPrefetch() // the DJ's next may already be queued in the engine; a started one is handled below
 	}
 	if !r.ok {
 		c.changed()
@@ -234,7 +234,9 @@ func (c *Controller) TopMine(ctx context.Context, by string, k int, id string) e
 	if err != nil {
 		return err
 	}
-	c.forgetPrefetch(displaced, false)
+	if moved, err := c.forgetPrefetch(ctx, displaced, false); moved {
+		return err
+	}
 	c.changed()
 	return nil
 }

@@ -100,3 +100,68 @@ func TestTopMineWithoutAFedSongMovesToTheFrontOfTheLane(t *testing.T) {
 		t.Fatalf("stale pick: err = %v", err)
 	}
 }
+
+// The decoder reads the next source up to half a second before the
+// handover; past that point the prefetch cannot be dropped.
+func startedPrefetch(t *testing.T, c *Controller, want string) {
+	t.Helper()
+	waitFor(t, func() bool { return c.eng.Length() > 0 })
+	c.maybePrefetch(ctx)
+	c.mu.Lock()
+	got := c.nextID
+	c.mu.Unlock()
+	if got != want {
+		t.Fatalf("prefetched %q, want %q", got, want)
+	}
+	c.eng.mu.Lock()
+	c.eng.nextStarted = true
+	c.eng.mu.Unlock()
+}
+
+func TestTopMineAfterTheDecoderStartedTheNextMovesOnToTheNewPick(t *testing.T) {
+	c := aliceWaiting(t)
+	startedPrefetch(t, c, "a1")
+	if err := c.TopMine(ctx, "a", 2, "a3"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { cur, _ := c.Current(); return cur.ID == "a3" })
+	if !decoderRunning(c.eng) {
+		t.Fatal("the decoder was halted: the bot goes silent")
+	}
+}
+
+func TestRemoveMineAfterTheDecoderStartedTheNextMovesOn(t *testing.T) {
+	c := aliceWaiting(t)
+	startedPrefetch(t, c, "a1")
+	if err := c.RemoveMine(ctx, "a", 0, "a1"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { cur, _ := c.Current(); return cur.ID == "a2" })
+	if !decoderRunning(c.eng) {
+		t.Fatal("the decoder was halted: the bot goes silent")
+	}
+}
+
+func TestAPrefetchOpeningDuringTopMineIsNotKept(t *testing.T) {
+	c, lib := newTestController(t)
+	c.Enqueue(named("dj1", "dj2")...)
+	_ = c.Jump(ctx, 0)
+	c.Request(ctx, "a", "Alice", named("a1", "a2", "a3"))
+	waitFor(t, func() bool { return c.eng.Length() > 0 })
+	lib.mu.Lock()
+	lib.onStream = func(id string) {
+		if id == "a1" { // the press lands while a1's stream is opening
+			if err := c.TopMine(ctx, "a", 2, "a3"); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	lib.mu.Unlock()
+	c.maybePrefetch(ctx)
+	c.mu.Lock()
+	got := c.nextID
+	c.mu.Unlock()
+	if got == "a1" {
+		t.Fatal("a1 was prefetched after it was moved back into the lane")
+	}
+}

@@ -468,7 +468,9 @@ func (c *Controller) afterRemove(ctx context.Context, r removal) error {
 		return nil
 	}
 	defer c.changed()
-	c.forgetPrefetch(r.track.ID, r.current)
+	if moved, err := c.forgetPrefetch(ctx, r.track.ID, r.current); moved {
+		return err
+	}
 	switch {
 	case r.current && r.last:
 		c.stopped()
@@ -481,13 +483,23 @@ func (c *Controller) afterRemove(ctx context.Context, r removal) error {
 
 // forgetPrefetch drops a prefetched copy of track id so the gapless
 // handover cannot play it; restarting means the playing track goes too.
-func (c *Controller) forgetPrefetch(id string, restarting bool) {
+// Once the decoder has read into the prefetch the playing track has under
+// half a second left, so it moves on to the queue's next row at once
+// (moved): halting the decoder there would leave nothing playing.
+func (c *Controller) forgetPrefetch(ctx context.Context, id string, restarting bool) (moved bool, err error) {
 	c.mu.Lock()
 	prefetched := id != "" && c.nextID == id
 	c.mu.Unlock()
-	if prefetched && (restarting || !c.dropPrefetch()) {
-		c.discardPrefetch() // about to restart anyway, or the decoder is already into it
+	switch {
+	case !prefetched:
+		return false, nil
+	case restarting:
+		c.discardPrefetch()
+		return false, nil
+	case c.dropPrefetch():
+		return false, nil
 	}
+	return true, c.Next(ctx)
 }
 
 // dropPrefetch forgets a prefetched next track without disturbing the
@@ -660,9 +672,21 @@ func (c *Controller) maybePrefetch(ctx context.Context) {
 		log.Printf("prefetch %s: %v", next.ID, err)
 		return
 	}
-	c.mu.Lock()
-	c.nextID, c.nextTrack = next.ID, *next
-	c.mu.Unlock()
+	// The queue may have changed while the stream opened; a song moved or
+	// removed meanwhile must not slip in through the handover.
+	var still bool
+	c.withQ(func(q *Queue) {
+		if p := peekQueue(q); p != nil && p.ID == next.ID {
+			still = true
+			c.mu.Lock()
+			c.nextID, c.nextTrack = next.ID, *next
+			c.mu.Unlock()
+		}
+	})
+	if !still {
+		src.Close()
+		return
+	}
 	c.eng.SetNext(src)
 }
 
