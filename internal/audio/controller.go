@@ -43,6 +43,7 @@ type Controller struct {
 	onEnd     func(t library.Track, played time.Duration, by, name string)
 	onStart   func(t library.Track, by, name string)
 	restarted time.Time // when p last restarted the current song
+	onChange  func()    // told after any queue or lane change
 }
 
 func NewController(lib library.Library, eng *Engine, notify func(string)) *Controller {
@@ -90,6 +91,7 @@ func (c *Controller) Request(ctx context.Context, by, name string, ts []library.
 	if refused {
 		return pending, ErrTooManyPending
 	}
+	defer c.changed()
 	if fed {
 		c.dropPrefetch() // the DJ's next may already be queued in the engine
 	}
@@ -163,6 +165,102 @@ func (c *Controller) began() {
 	if fn != nil {
 		fn(t, by, name)
 	}
+	c.changed()
+}
+
+// SetChanged is told after any change to the queue, the lanes or the
+// current track, outside the controller's locks.
+func (c *Controller) SetChanged(fn func()) {
+	c.mu.Lock()
+	c.onChange = fn
+	c.mu.Unlock()
+}
+
+func (c *Controller) changed() {
+	c.mu.Lock()
+	fn := c.onChange
+	c.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// Snapshot is everything needed to put the queue back after a restart.
+type Snapshot struct {
+	Tracks   []library.Track
+	Tags     [][2]string // by, name per row; empty for the DJ's own rows
+	Index    int
+	Position time.Duration
+	Paused   bool
+	Lanes    []Lane
+}
+
+func (c *Controller) Snapshot() Snapshot {
+	var s Snapshot
+	c.withQ(func(q *Queue) {
+		s.Tracks = append([]library.Track(nil), q.Tracks()...)
+		s.Tags = make([][2]string, len(s.Tracks))
+		for i := range s.Tracks {
+			s.Tags[i][0], s.Tags[i][1] = q.Tag(i)
+		}
+		s.Index = q.Index()
+		for _, l := range c.mix.lanes {
+			s.Lanes = append(s.Lanes, Lane{By: l.By, Name: l.Name, Tracks: append([]library.Track(nil), l.Tracks...)})
+		}
+	})
+	c.mu.Lock()
+	has := c.has
+	c.mu.Unlock()
+	if has {
+		s.Position = c.eng.Position()
+		s.Paused = !c.eng.Playing()
+	}
+	return s
+}
+
+// Restore replaces the queue, its requesters and the lanes with s. With
+// play set it starts s.Index at s.Position (paused if s.Paused); otherwise
+// the queue is loaded and nothing plays until Jump or a request.
+func (c *Controller) Restore(ctx context.Context, s Snapshot, play bool) error {
+	c.discardPrefetch()
+	c.withQ(func(q *Queue) {
+		q.Replace(s.Tracks, max(s.Index, 0))
+		for i := range q.tags {
+			if i < len(s.Tags) {
+				q.tags[i] = tag{s.Tags[i][0], s.Tags[i][1]}
+			}
+		}
+		c.mix.lanes, c.mix.fedPos, c.mix.fedBy = nil, -1, ""
+		for _, l := range s.Lanes {
+			c.mix.lanes = append(c.mix.lanes, &Lane{By: l.By, Name: l.Name, Tracks: append([]library.Track(nil), l.Tracks...)})
+		}
+		for i := q.idx + 1; i < len(q.tags); i++ { // the request already fed ahead of the cursor
+			if q.tags[i].by != "" {
+				c.mix.fedPos, c.mix.fedBy = i, q.tags[i].by
+				break
+			}
+		}
+	})
+	defer c.changed()
+	if !play || len(s.Tracks) == 0 {
+		c.stopped()
+		return nil
+	}
+	var t library.Track
+	c.withQ(func(q *Queue) { t, _ = q.Current() })
+	src, err := c.open(ctx, t)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.current, c.has, c.retried, c.reported = t, true, "", false
+	c.mu.Unlock()
+	c.eng.PlayAt(src, s.Position)
+	if s.Paused {
+		c.eng.Pause()
+	}
+	c.began()
+	return nil
 }
 
 // SetTrackStart is told every track that becomes current and who asked
@@ -226,6 +324,7 @@ func (c *Controller) stopped() {
 	c.mu.Lock()
 	c.has = false
 	c.mu.Unlock()
+	c.changed()
 }
 
 // start plays the queue's current track, trying twice before skipping
@@ -296,7 +395,10 @@ func (c *Controller) PlayTracks(ctx context.Context, ts []library.Track, start i
 	return c.start(ctx)
 }
 
-func (c *Controller) Enqueue(ts ...library.Track) { c.withQ(func(q *Queue) { q.Append(ts...) }) }
+func (c *Controller) Enqueue(ts ...library.Track) {
+	c.withQ(func(q *Queue) { q.Append(ts...) })
+	c.changed()
+}
 
 // EnqueueAndPlay appends ts and, when nothing is playing, starts the first
 // of them: what someone typing /play into a silent room expects.
@@ -316,6 +418,7 @@ func (c *Controller) EnqueueAndPlay(ctx context.Context, ts []library.Track) err
 			q.Jump(first)
 		}
 	})
+	defer c.changed()
 	if !idle {
 		return nil
 	}
@@ -330,7 +433,7 @@ func (c *Controller) Clear() (requests int) {
 		q.Clear()
 	})
 	c.discardPrefetch()
-	c.stopped()
+	c.stopped() // reports the change
 	return requests
 }
 
@@ -351,6 +454,7 @@ func (c *Controller) Remove(ctx context.Context, i int) error {
 	if !ok {
 		return nil
 	}
+	defer c.changed()
 	c.mu.Lock()
 	prefetched := c.nextID == removed.ID
 	c.mu.Unlock()

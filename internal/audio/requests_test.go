@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -370,5 +371,89 @@ func TestASecondPrevSoonAfterARestartGoesBack(t *testing.T) {
 	_ = c.Prev(ctx)
 	if cur, _ := c.Current(); cur.ID != "a" {
 		t.Fatalf("second p soon after a restart stayed on %s", cur.ID)
+	}
+}
+
+func silentController(t *testing.T) *Controller {
+	t.Helper()
+	srv := fixtureServer(t)
+	eng := NewEngine(NewSilentOutput(OutRate), OutRate)
+	t.Cleanup(eng.Close)
+	return NewController(&fakeLib{url: srv.URL}, eng, func(string) {})
+}
+
+func TestSnapshotRestoreRoundTrip(t *testing.T) {
+	c, _ := newTestController(t)
+	c.Enqueue(named("dj1", "dj2")...)
+	_ = c.Jump(ctx, 0)
+	c.Request(ctx, "a", "Alice", named("a1", "a2", "a3")) // a1 fed, a2 a3 waiting
+	s := c.Snapshot()
+	if len(s.Tracks) != 3 || s.Index != 0 || s.Tags[1] != [2]string{"a", "Alice"} || len(s.Lanes) != 1 || len(s.Lanes[0].Tracks) != 2 {
+		t.Fatalf("snapshot = %+v", s)
+	}
+	d, _ := newTestController(t)
+	if err := d.Restore(ctx, s, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(ids(d.Tracks()), " "); got != "dj1 a1 dj2" || d.Index() != 0 {
+		t.Fatalf("restored queue = %q idx %d", got, d.Index())
+	}
+	if _, name := d.RequesterOf(1); name != "Alice" {
+		t.Fatalf("tag lost: %q", name)
+	}
+	if p := d.Pending(); len(p) != 1 || len(p[0].Tracks) != 2 {
+		t.Fatalf("lanes = %+v", p)
+	}
+	// the fed row is still known: a new request does not jump ahead of a1
+	d.Request(ctx, "b", "Bob", named("b1"))
+	if got := strings.Join(ids(d.Tracks()), " "); got != "dj1 a1 dj2" {
+		t.Fatalf("after a request = %q", got)
+	}
+}
+
+func TestRestorePlaysAtPosition(t *testing.T) {
+	c := silentController(t)
+	s := Snapshot{Tracks: named("x", "y"), Tags: make([][2]string, 2), Index: 1, Position: 1200 * time.Millisecond}
+	if err := c.Restore(ctx, s, true); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { cur, ok := c.Current(); return ok && cur.ID == "y" })
+	if p := c.eng.Position(); p < time.Second {
+		t.Fatalf("started at %v, want ≥ 1s", p)
+	}
+}
+
+func TestRestoreLoadedButStopped(t *testing.T) {
+	c, _ := newTestController(t)
+	if err := c.Restore(ctx, Snapshot{Tracks: named("x", "y"), Tags: make([][2]string, 2), Index: 0}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Current(); ok {
+		t.Fatal("playing after a restore without play")
+	}
+	if err := c.Jump(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { cur, ok := c.Current(); return ok && cur.ID == "x" })
+}
+
+func TestChangedFiresOnQueueChanges(t *testing.T) {
+	c, _ := newTestController(t)
+	var n atomic.Int32
+	c.SetChanged(func() { n.Add(1) })
+	steps := []func(){
+		func() { c.Enqueue(named("a")...) },
+		func() { _ = c.Jump(ctx, 0) },
+		func() { c.Request(ctx, "u", "U", named("r1", "r2")) },
+		func() { _ = c.Remove(ctx, 1) },
+		func() { _ = c.Next(ctx) },
+		func() { c.Clear() },
+	}
+	for i, step := range steps {
+		before := n.Load()
+		step()
+		if n.Load() == before {
+			t.Fatalf("step %d did not report a change", i)
+		}
 	}
 }
