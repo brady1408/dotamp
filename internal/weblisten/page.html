@@ -35,7 +35,7 @@ button { font: 600 1rem var(--sans); background: var(--accent); color: var(--acc
 button:disabled { opacity: 0.45; cursor: default; }
 button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 .vol { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 160px; color: var(--muted); font-size: 0.85rem; }
-.vol input { flex: 1; accent-color: var(--accent); }
+.vol input { flex: 1; min-width: 0; accent-color: var(--accent); }
 .note { font-size: 0.88rem; color: var(--muted); margin: 0; }
 h2 { font: 600 0.78rem var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 0; }
 ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
@@ -45,6 +45,20 @@ li .n { font: 0.8rem var(--mono); color: var(--muted); padding-top: 2px; }
 li .t { min-width: 0; overflow-wrap: anywhere; }
 li .who { display: block; font-size: 0.82rem; color: var(--muted); }
 .empty { color: var(--muted); font-size: 0.9rem; }
+.mine[hidden] { display: none; }
+.warn { font-size: 0.82rem; color: var(--muted); margin: 0; }
+.search { display: grid; gap: 8px; }
+.search input { font: 1rem var(--sans); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; width: 100%; }
+.results { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.results:empty { display: none; }
+.row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.row:last-child { border-bottom: 0; }
+.row .t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.row .tag { display: block; font-size: 0.78rem; color: var(--accent); font-weight: 600; }
+.small { font: 600 0.82rem var(--sans); min-width: 0; padding: 8px 10px; white-space: nowrap; background: transparent; color: var(--accent); border: 1px solid var(--line); }
+.small.go { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.status { font-size: 0.88rem; margin: 0; min-height: 1.3em; color: var(--muted); }
+.status.bad { color: var(--live); }
 </style>
 </head>
 <body>
@@ -61,6 +75,18 @@ li .who { display: block; font-size: 0.82rem; color: var(--muted); }
       <label class="vol" for="volume">Volume <input id="volume" type="range" min="0" max="100" value="80"></label>
     </div>
     <p class="note" id="note">A few seconds behind Discord. If you're in the voice channel too, mute one.</p>
+  </section>
+
+  <section class="card mine" id="mine" hidden>
+    <h2>Your songs</h2>
+    <p class="warn">This link acts as you. Anyone you share it with can add and remove your songs.</p>
+    <div class="search">
+      <label for="q" class="note">Add a song, album or playlist</label>
+      <input id="q" type="search" autocomplete="off" placeholder="Search the library">
+      <ul class="results" id="results"></ul>
+    </div>
+    <p class="status" id="status" aria-live="polite"></p>
+    <ol id="songs"></ol>
   </section>
 
   <section class="card">
@@ -115,7 +141,7 @@ li .who { display: block; font-size: 0.82rem; color: var(--muted); }
     try {
       const r = await fetch(base + "/now.json", { cache: "no-store" });
       if (r.status === 403) { location.reload(); return; }
-      now = await r.json(); fetchedAt = Date.now(); render(); tick();
+      now = await r.json(); fetchedAt = Date.now(); render(); renderMine(); tick();
     } catch (e) { /* the next poll tries again */ }
   }
 
@@ -146,6 +172,81 @@ li .who { display: block; font-size: 0.82rem; color: var(--muted); }
     else stop("The stream stopped. If dotamp is still in Discord, press Play again.");
   });
   audio.addEventListener("ended", () => { if (playing) stop("The stream ended."); });
+
+  // Your songs: the link owner's lane, managed with the same rules as /play and /remove.
+  let mineSig = "";
+  function say(msg, bad) { const el = $("status"); el.textContent = msg || ""; el.classList.toggle("bad", !!bad); }
+
+  async function send(path, payload) {
+    try {
+      const r = await fetch(base + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (r.status === 403) { location.reload(); return null; }
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) { say(out.error || "That didn't work. Try again.", true); return null; }
+      return out;
+    } catch (e) { say("Couldn't reach dotamp. Try again.", true); return null; }
+  }
+
+  function smallButton(text, go, onClick) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "small" + (go ? " go" : ""); b.textContent = text;
+    b.addEventListener("click", async () => { b.disabled = true; await onClick(); b.disabled = false; });
+    return b;
+  }
+
+  function renderMine() {
+    if (!now || !now.lanes) return;
+    $("mine").hidden = false;
+    const sig = JSON.stringify(now.mine);
+    if (sig === mineSig) return; // rebuilding under a finger would eat the tap
+    mineSig = sig;
+    const ol = $("songs");
+    ol.replaceChildren();
+    now.mine.forEach((s, k) => {
+      const li = document.createElement("li");
+      li.className = "row";
+      const t = document.createElement("span"); t.className = "t";
+      t.textContent = s.title + (s.artist ? " · " + s.artist : "");
+      if (s.next) { const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = "Lined up for your next turn"; t.prepend(tag); }
+      li.append(t);
+      if (k > 0) li.append(smallButton("Play next", false, async () => {
+        if (await send("/top", { k, id: s.id })) { say("Moved " + s.title + " to the top"); await poll(); }
+      }));
+      li.append(smallButton("Remove", false, async () => {
+        if (await send("/remove", { k, id: s.id })) { say("Removed " + s.title); await poll(); }
+      }));
+      ol.append(li);
+    });
+    if (!now.mine.length) { const li = document.createElement("li"); li.className = "empty"; li.textContent = "You have nothing waiting. Search above to add something."; ol.append(li); }
+  }
+
+  let searchTimer = 0, searchSeq = 0;
+  $("q").addEventListener("input", e => {
+    clearTimeout(searchTimer);
+    const q = e.target.value.trim();
+    if (q.length < 2) { $("results").replaceChildren(); return; }
+    searchTimer = setTimeout(async () => {
+      const seq = ++searchSeq;
+      try {
+        const r = await fetch(base + "/search?q=" + encodeURIComponent(q), { cache: "no-store" });
+        if (r.status === 403) { location.reload(); return; }
+        const cs = await r.json();
+        if (seq !== searchSeq) return; // a newer search is on its way
+        const ul = $("results");
+        ul.replaceChildren();
+        cs.forEach(c => {
+          const li = document.createElement("li"); li.className = "row";
+          const t = document.createElement("span"); t.className = "t"; t.textContent = c.label;
+          li.append(t, smallButton("Add", true, async () => {
+            const out = await send("/add", { value: c.value });
+            if (out) { say(out.message); $("q").value = ""; ul.replaceChildren(); await poll(); }
+          }));
+          ul.append(li);
+        });
+        if (!cs.length) { const li = document.createElement("li"); li.className = "empty"; li.textContent = "Nothing found"; ul.append(li); }
+      } catch (e) { /* the next keystroke tries again */ }
+    }, 300);
+  });
 
   poll(); setInterval(poll, 5000); setInterval(tick, 1000);
 })();

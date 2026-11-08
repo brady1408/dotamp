@@ -442,33 +442,52 @@ func (c *Controller) Clear() (requests int) {
 // A prefetched copy of the removed track is discarded so the gapless
 // handover cannot play it.
 func (c *Controller) Remove(ctx context.Context, i int) error {
-	var removed library.Track
-	var wasCurrent, wasLast, ok bool
-	c.withQ(func(q *Queue) {
-		if i >= 0 && i < len(q.Tracks()) {
-			removed, ok = q.Tracks()[i], true
-			wasCurrent, wasLast = q.Remove(i)
-			c.mix.removed(i)
-		}
-	})
-	if !ok {
+	var r removal
+	c.withQ(func(q *Queue) { r = c.removeRow(q, i) })
+	return c.afterRemove(ctx, r)
+}
+
+// removal is what removeRow did, for afterRemove to finish outside the lock.
+type removal struct {
+	track             library.Track
+	ok, current, last bool
+}
+
+func (c *Controller) removeRow(q *Queue, i int) removal {
+	if i < 0 || i >= len(q.Tracks()) {
+		return removal{}
+	}
+	r := removal{track: q.Tracks()[i], ok: true}
+	r.current, r.last = q.Remove(i)
+	c.mix.removed(i)
+	return r
+}
+
+func (c *Controller) afterRemove(ctx context.Context, r removal) error {
+	if !r.ok {
 		return nil
 	}
 	defer c.changed()
-	c.mu.Lock()
-	prefetched := c.nextID == removed.ID
-	c.mu.Unlock()
-	if prefetched && (wasCurrent || !c.dropPrefetch()) {
-		c.discardPrefetch() // about to restart anyway, or the decoder is already into it
-	}
+	c.forgetPrefetch(r.track.ID, r.current)
 	switch {
-	case wasCurrent && wasLast:
+	case r.current && r.last:
 		c.stopped()
 		return nil
-	case wasCurrent:
+	case r.current:
 		return c.start(ctx)
 	}
 	return nil
+}
+
+// forgetPrefetch drops a prefetched copy of track id so the gapless
+// handover cannot play it; restarting means the playing track goes too.
+func (c *Controller) forgetPrefetch(id string, restarting bool) {
+	c.mu.Lock()
+	prefetched := id != "" && c.nextID == id
+	c.mu.Unlock()
+	if prefetched && (restarting || !c.dropPrefetch()) {
+		c.discardPrefetch() // about to restart anyway, or the decoder is already into it
+	}
 }
 
 // dropPrefetch forgets a prefetched next track without disturbing the

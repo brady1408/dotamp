@@ -174,8 +174,9 @@ func run(cfgPath string, log *slog.Logger) error {
 		client.Close(cctx)
 	}()
 	if cfg.Web != nil && len(b.rooms) == 1 {
-		for _, r := range b.rooms {
-			go serveWeb(ctx, cfg.Web.Listen, r, sec.web, &b.webServing, log)
+		for g, r := range b.rooms {
+			lanes := webLanes{r: r, req: b.req, name: b.memberName(g)}
+			go serveWeb(ctx, cfg.Web.Listen, r, lanes, sec.web, &b.webServing, log)
 		}
 	}
 	go b.resumeRooms(ctx)

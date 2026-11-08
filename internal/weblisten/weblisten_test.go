@@ -47,7 +47,7 @@ func setup(t *testing.T, max int) (*httptest.Server, *fakeRoom, *Hub, string) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	hub := NewHub(room, max, log)
 	hub.checkEvery = 50 * time.Millisecond
-	srv := httptest.NewServer(NewServer(hub, room, secret, time.Now, log))
+	srv := httptest.NewServer(NewServer(hub, room, nil, secret, time.Now, log))
 	t.Cleanup(srv.Close)
 	return srv, room, hub, Sign(secret, "u1", time.Now().Add(time.Hour))
 }
