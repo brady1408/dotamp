@@ -47,6 +47,7 @@ type houseBot struct {
 	lib    *multi.Library
 	req    *requests.Core
 	rooms  map[snowflake.ID]*room.Room
+	ready  chan snowflake.ID // allowed guilds as their caches load
 }
 
 func main() {
@@ -111,7 +112,7 @@ func run(cfgPath string, log *slog.Logger) error {
 		return errors.New("no music library configured")
 	}
 
-	b := &houseBot{cfg: cfg, log: log, lib: lib, rooms: map[snowflake.ID]*room.Room{}}
+	b := &houseBot{cfg: cfg, log: log, lib: lib, rooms: map[snowflake.ID]*room.Room{}, ready: make(chan snowflake.ID, 8)}
 	b.req = requests.New(func() library.Library { return lib })
 	client, err := disgo.New(sec.discord,
 		disgobot.WithLogger(slog.New(warnOnly{log.Handler()})),
@@ -137,6 +138,7 @@ func run(cfgPath string, log *slog.Logger) error {
 		guild := g
 		b.rooms[g] = room.New(ctx, room.Config{
 			Guild: g, Library: lib, History: hist, HistoryDir: cfg.HistoryDir,
+			StateDir: filepath.Join(filepath.Dir(filepath.Clean(cfg.HistoryDir)), "state"),
 			Autoplay: cfg.autoplay(), IdleLeave: cfg.idleLeave(), Logger: log.With("guild", gs),
 			Deps: room.Deps{
 				Open:      func(ctx context.Context, ch snowflake.ID) (room.Conn, error) { return b.open(ctx, guild, ch) },
@@ -164,10 +166,11 @@ func run(cfgPath string, log *slog.Logger) error {
 		cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		for _, r := range b.rooms {
-			r.Leave(cctx)
+			r.Shutdown(cctx) // saves, keeps the queue for the next start
 		}
 		client.Close(cctx)
 	}()
+	go b.resumeRooms(ctx)
 	tick := time.NewTicker(15 * time.Second)
 	defer tick.Stop()
 	for {
@@ -191,8 +194,57 @@ func (b *houseBot) guard(where string) {
 
 // onGuildReady and onGuildJoin keep the bot to its allowlist and put the
 // commands on each allowed server.
-func (b *houseBot) onGuildReady(e *events.GuildReady) { b.admit(e.GuildID, e.Guild.Name) }
-func (b *houseBot) onGuildJoin(e *events.GuildJoin)   { b.admit(e.GuildID, e.Guild.Name) }
+func (b *houseBot) onGuildReady(e *events.GuildReady) {
+	b.admit(e.GuildID, e.Guild.Name)
+	if allowedGuild(b.cfg, e.GuildID) {
+		select {
+		case b.ready <- e.GuildID:
+		default:
+		}
+	}
+}
+
+// resumeRooms picks each room up where the last run left it, once its
+// server's voice states are in the cache (or after 10 s regardless).
+func (b *houseBot) resumeRooms(ctx context.Context) {
+	defer b.guard("resume")
+	waiting := len(b.rooms)
+	timeout := time.After(10 * time.Second)
+	done := map[snowflake.ID]bool{}
+	resume := func(g snowflake.ID) {
+		r := b.rooms[g]
+		if r == nil || done[g] {
+			return
+		}
+		done[g] = true
+		time.Sleep(time.Second) // voice states arrive just after the guild
+		ok, err := r.Resume(ctx)
+		switch {
+		case err != nil:
+			b.log.Warn("resume", "guild", g, "err", err)
+		case ok:
+			ch, name := r.Where()
+			cur, _ := r.Controller().Current()
+			b.log.Info("resumed", "guild", g, "channel", ch, "name", name, "track", cur.Title)
+		default:
+			b.log.Info("nothing to rejoin", "guild", g, "queued", len(r.Controller().Tracks()))
+		}
+	}
+	for len(done) < waiting {
+		select {
+		case <-ctx.Done():
+			return
+		case g := <-b.ready:
+			resume(g)
+		case <-timeout:
+			for g := range b.rooms {
+				resume(g)
+			}
+			return
+		}
+	}
+}
+func (b *houseBot) onGuildJoin(e *events.GuildJoin) { b.admit(e.GuildID, e.Guild.Name) }
 
 func (b *houseBot) admit(g snowflake.ID, name string) {
 	go func() {
