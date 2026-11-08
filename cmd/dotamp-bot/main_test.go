@@ -149,3 +149,31 @@ func TestWebConfigReadsTheSecretFromItsFile(t *testing.T) {
 		t.Fatal("a short web secret must be refused")
 	}
 }
+
+func TestWebConfigIsValidated(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "discord-token"), []byte("tok\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "web-secret"), []byte("s3cret-s3cret-s3cret-s3cret-0000\n"), 0o600)
+	p := filepath.Join(dir, "config.json")
+	try := func(guilds, web string) error {
+		os.WriteFile(p, []byte(fmt.Sprintf(`{"discord_token_file":%q,"allow_guilds":%s,"web":%s}`, filepath.Join(dir, "discord-token"), guilds,
+			strings.ReplaceAll(web, "SECRET", filepath.Join(dir, "web-secret")))), 0o600)
+		_, _, err := loadConfig(p)
+		return err
+	}
+	good := `{"listen":":8097","base_url":"https://listen.bradycole.com","secret_file":"SECRET"}`
+	if err := try(`["1"]`, good); err != nil {
+		t.Fatalf("good config refused: %v", err)
+	}
+	cases := map[string][2]string{
+		"two guilds":  {`["1","2"]`, good},
+		"no base_url": {`["1"]`, `{"listen":":8097","secret_file":"SECRET"}`},
+		"http base":   {`["1"]`, `{"listen":":8097","base_url":"http://listen.bradycole.com","secret_file":"SECRET"}`},
+		"no listen":   {`["1"]`, `{"base_url":"https://listen.bradycole.com","secret_file":"SECRET"}`},
+	}
+	for name, c := range cases {
+		if err := try(c[0], c[1]); err == nil {
+			t.Fatalf("%s: accepted", name)
+		}
+	}
+}

@@ -19,6 +19,7 @@ type Now struct {
 	Track    *Track     `json:"track,omitempty"`
 	Position float64    `json:"position"`
 	Upcoming []Upcoming `json:"upcoming"`
+	Full     bool       `json:"full,omitempty"` // every listener slot is taken
 }
 
 type Track struct {
@@ -90,7 +91,9 @@ func (s *server) nowJSON(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	json.NewEncoder(w).Encode(s.room.Now())
+	n := s.room.Now()
+	n.Full = s.hub.Full()
+	json.NewEncoder(w).Encode(n)
 }
 
 func (s *server) stream(w http.ResponseWriter, r *http.Request) {

@@ -46,6 +46,13 @@ func NewHub(room Room, max int, log *slog.Logger) *Hub {
 	return &Hub{room: room, max: max, log: log, checkEvery: time.Second, subs: map[*Sub]struct{}{}}
 }
 
+// Full reports whether every listener slot is taken.
+func (h *Hub) Full() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.subs) >= h.max
+}
+
 func (h *Hub) Running() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()

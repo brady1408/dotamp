@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/brady1408/dotamp/internal/audio"
@@ -12,6 +14,9 @@ import (
 	"github.com/brady1408/dotamp/internal/room"
 	"github.com/brady1408/dotamp/internal/weblisten"
 )
+
+// maxListeners caps the web player: 25 × 128 kbps is about 3.2 Mbps of upload.
+const maxListeners = 25
 
 // webRoom shows one room to the web listener.
 type webRoom struct{ r *room.Room }
@@ -43,10 +48,11 @@ func (w webRoom) Now() weblisten.Now {
 	return n
 }
 
-// serveWeb runs the web listener until ctx ends.
-func serveWeb(ctx context.Context, addr string, r *room.Room, secret []byte, log *slog.Logger) {
+// serveWeb runs the web listener until ctx ends; serving is set while it
+// is actually listening, so /listen never hands out a link that can't work.
+func serveWeb(ctx context.Context, addr string, r *room.Room, secret []byte, serving *atomic.Bool, log *slog.Logger) {
 	wr := webRoom{r}
-	hub := weblisten.NewHub(wr, 25, log)
+	hub := weblisten.NewHub(wr, maxListeners, log)
 	srv := &http.Server{Addr: addr, Handler: weblisten.NewServer(hub, wr, secret, time.Now, log), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
@@ -54,8 +60,15 @@ func serveWeb(ctx context.Context, addr string, r *room.Room, secret []byte, log
 		defer cancel()
 		srv.Shutdown(sctx)
 	}()
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Error("web listener", "err", err)
+		return
+	}
+	serving.Store(true)
+	defer serving.Store(false)
 	log.Info("web listener", "addr", addr)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("web listener", "err", err)
 	}
 }

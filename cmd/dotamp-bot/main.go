@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -41,14 +42,15 @@ import (
 var version = "dev"
 
 type houseBot struct {
-	cfg       Config
-	log       *slog.Logger
-	client    *disgobot.Client
-	lib       *multi.Library
-	req       *requests.Core
-	rooms     map[snowflake.ID]*room.Room
-	ready     chan snowflake.ID // allowed guilds as their caches load
-	webSecret []byte
+	cfg        Config
+	log        *slog.Logger
+	client     *disgobot.Client
+	lib        *multi.Library
+	req        *requests.Core
+	rooms      map[snowflake.ID]*room.Room
+	ready      chan snowflake.ID // allowed guilds as their caches load
+	webSecret  []byte
+	webServing atomic.Bool
 }
 
 func main() {
@@ -173,7 +175,7 @@ func run(cfgPath string, log *slog.Logger) error {
 	}()
 	if cfg.Web != nil && len(b.rooms) == 1 {
 		for _, r := range b.rooms {
-			go serveWeb(ctx, cfg.Web.Listen, r, sec.web, log)
+			go serveWeb(ctx, cfg.Web.Listen, r, sec.web, &b.webServing, log)
 		}
 	}
 	go b.resumeRooms(ctx)

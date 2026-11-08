@@ -99,6 +99,14 @@ func loadConfig(path string) (Config, secrets, error) {
 		}
 	}
 	if cfg.Web != nil {
+		switch {
+		case len(cfg.AllowGuilds) != 1:
+			return cfg, sec, errors.New("web: the web player serves one server; allow exactly one guild")
+		case cfg.Web.Listen == "":
+			return cfg, sec, errors.New(`web: set "listen", e.g. ":8097"`)
+		case !strings.HasPrefix(cfg.Web.BaseURL, "https://"):
+			return cfg, sec, errors.New(`web: set "base_url" to the https address people open, e.g. "https://listen.bradycole.com"`)
+		}
 		w, err := read(cfg.Web.SecretFile)
 		if err != nil {
 			return cfg, sec, fmt.Errorf("web secret: %w", err)

@@ -210,3 +210,19 @@ func TestTheEncoderStopsWithTheLastListener(t *testing.T) {
 		t.Fatalf("running %v feeds %d dropped %d", hub.Running(), feeds, dropped)
 	}
 }
+
+func TestNowSaysWhenThePlayerIsFull(t *testing.T) {
+	srv, _, _, tok := setup(t, 1)
+	_, body := get(t, srv.URL+"/l/"+tok+"/now.json")
+	if strings.Contains(body, `"full":true`) {
+		t.Fatal("full before anyone listens")
+	}
+	openStream(t, srv.URL+"/l/"+tok+"/stream.ogg")
+	time.Sleep(50 * time.Millisecond)
+	if _, body := get(t, srv.URL+"/l/"+tok+"/now.json"); !strings.Contains(body, `"full":true`) {
+		t.Fatalf("now.json at the cap: %s", body)
+	}
+	if _, page := get(t, srv.URL+"/l/"+tok); !strings.Contains(page, "The web player is full right now") || !strings.Contains(page, "isn't in a voice channel") {
+		t.Fatal("the page lacks the full and not-playing messages")
+	}
+}

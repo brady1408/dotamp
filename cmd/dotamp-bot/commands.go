@@ -124,7 +124,7 @@ func (b *houseBot) run(ctx context.Context, r *room.Room, g snowflake.ID, cmd st
 		}
 		return reply{Text: "Playing in " + chName, Public: true}
 	case "listen":
-		if b.cfg.Web == nil {
+		if b.cfg.Web == nil || !b.webServing.Load() {
 			return reply{Text: "The web player isn't set up"}
 		}
 		tok := weblisten.Sign(b.webSecret, user.String(), time.Now().Add(listenFor))

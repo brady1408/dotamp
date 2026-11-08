@@ -137,7 +137,14 @@ li .who { display: block; font-size: 0.82rem; color: var(--muted); }
     audio.play().catch(() => stop("Your browser didn't start the audio. Press Play again."));
   });
   $("volume").addEventListener("input", e => { audio.volume = e.target.value / 100; });
-  audio.addEventListener("error", () => { if (playing) stop("The stream stopped. If dotamp is still in Discord, press Play again."); });
+  // An <audio> error hides the HTTP status, so ask now.json why.
+  audio.addEventListener("error", async () => {
+    if (!playing) return;
+    await poll();
+    if (now && !now.live) stop("dotamp isn't in a voice channel right now. Ask someone to /join it in Discord, then press Play.");
+    else if (now && now.full) stop("The web player is full right now (25 listening). Try again in a bit.");
+    else stop("The stream stopped. If dotamp is still in Discord, press Play again.");
+  });
   audio.addEventListener("ended", () => { if (playing) stop("The stream ended."); });
 
   poll(); setInterval(poll, 5000); setInterval(tick, 1000);

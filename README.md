@@ -118,6 +118,8 @@ Every song played while broadcasting is logged under `~/.config/dotamp/history/`
 
 When requests run out it plays radio: songs that sound like the last one (Plex sonic analysis, Navidrome similar songs), shaped by what the server has played through and skipped, nothing heard in the last four hours. It leaves five minutes after the last listener goes. Only servers on its allowlist can use it; it leaves any other.
 
+`/listen` gives anyone in the server a private link (good for 12 hours) to hear the bot in a browser while it's in a voice channel, with the song and the queue on the page; it runs a few seconds behind Discord. Configure it with the `web` block in the config and put it behind your reverse proxy.
+
 Setup is in `deploy/dotamp-bot/`: a config like `config.example.json` (secrets in their own files, never in the config), and `deploy.sh` to build and run it in Docker. `dotamp-bot ctl …` inside the container speaks the same control API as `dotamp ctl`.
 
 ## Control
