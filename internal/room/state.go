@@ -191,12 +191,23 @@ func (r *Room) Resume(ctx context.Context) (bool, error) {
 		r.mu.Unlock()
 		return false, nil
 	}
+	played := false
 	if len(snap.Tracks) > 0 {
 		if err := r.ctrl.Restore(context.WithoutCancel(ctx), snap, true); err != nil {
+			// The song can't be opened right now: load the queue anyway and
+			// let Join start it, which skips what won't play.
+			r.cfg.Logger.Warn("resume: current song won't open; carrying on", "err", err)
+		} else {
+			played = true
+		}
+	}
+	if !played {
+		if err := r.ctrl.Restore(ctx, snap, false); err != nil {
 			return false, err
 		}
-	} else if err := r.ctrl.Restore(ctx, snap, false); err != nil {
-		return false, err
+		r.mu.Lock()
+		r.pending = len(snap.Tracks) > 0
+		r.mu.Unlock()
 	}
 	if err := r.Join(ctx, ch, s.ChannelName); err != nil {
 		return false, err

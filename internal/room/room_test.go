@@ -542,3 +542,19 @@ func TestHoldSurvivesARestart(t *testing.T) {
 		t.Fatal("radio refilled after a restart that followed a clear")
 	}
 }
+
+func TestResumeRejoinsEvenWhenTheSongWontOpen(t *testing.T) {
+	h := newHarness(t)
+	h.playing(t)
+	h.r.Shutdown(ctx)
+	h.lib.fail.Store(true) // the library refuses streams for a while
+	r2 := h.newRoom()
+	t.Cleanup(func() { r2.Leave(context.Background()) })
+	ok, err := r2.Resume(ctx)
+	if err != nil || !ok {
+		t.Fatalf("resume = %v %v; a bad song must not keep the bot out of the room", ok, err)
+	}
+	if ch, _ := r2.Where(); ch != 10 {
+		t.Fatal("did not rejoin")
+	}
+}
