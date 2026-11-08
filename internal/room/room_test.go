@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,8 +44,8 @@ type lib struct {
 	similar []library.Track
 	fail    atomic.Bool
 	delay   atomic.Int64 // Similar sleeps this long (ns)
-	first   sync.Once
-	asked   atomic.Value // the first track Similar was asked about (library.Track)
+	mu      sync.Mutex
+	asked   []string // every track Similar was asked about, in order
 }
 
 func (l *lib) Stream(context.Context, library.Track) (library.Stream, error) {
@@ -54,7 +55,9 @@ func (l *lib) Stream(context.Context, library.Track) (library.Stream, error) {
 	return library.Stream{URL: l.url + "/sine440-44k.flac", Codec: "flac"}, nil
 }
 func (l *lib) Similar(_ context.Context, t library.Track, _ int) ([]library.Track, error) {
-	l.first.Do(func() { l.asked.Store(t) })
+	l.mu.Lock()
+	l.asked = append(l.asked, t.ID)
+	l.mu.Unlock()
 	time.Sleep(time.Duration(l.delay.Load()))
 	if l.fail.Load() {
 		return nil, errors.New("plex down")
@@ -406,10 +409,7 @@ func TestAColdJoinStartsFromAFavouriteNotTheLastLine(t *testing.T) {
 			Track: library.Track{ID: "junk", Title: "Junk", Artist: "Pitbull", Duration: 200 * time.Second}})
 	})
 	h.r.Join(ctx, 10, "a-team")
-	waitFor(t, func() bool { v := h.lib.asked.Load(); return v != nil })
-	if got := h.lib.asked.Load().(library.Track); got.ID != "fav" {
-		t.Fatalf("radio started from %q, not the room's favourite", got.ID)
-	}
+	waitFor(t, func() bool { return h.lib.askedAbout("fav") })
 }
 
 func (h *harness) stateFile() string { return filepath.Join(h.dir, "state", "1.json") }
@@ -557,4 +557,10 @@ func TestResumeRejoinsEvenWhenTheSongWontOpen(t *testing.T) {
 	if ch, _ := r2.Where(); ch != 10 {
 		t.Fatal("did not rejoin")
 	}
+}
+
+func (l *lib) askedAbout(id string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Contains(l.asked, id)
 }

@@ -367,12 +367,14 @@ func (r *Room) fill(ctx context.Context) {
 	seed := uint64(time.Now().UnixNano())
 	rng := rand.New(rand.NewPCG(seed, seed>>1))
 	var last *library.Track
+	var lastBy string
 	if cur, ok := r.ctrl.Current(); ok {
 		last = &cur
+		lastBy, _ = r.ctrl.RequesterOf(r.ctrl.Index())
 	} else {
 		last = favourite(recent, r.cfg.Deps.Now(), rng)
 	}
-	t, err := radio.Pick(ctx, r.cfg.Library, radio.Input{Last: last, History: recent, Queue: r.ctrl.Tracks(), Now: r.cfg.Deps.Now(), Rand: rng})
+	t, err := radio.Pick(ctx, r.cfg.Library, radio.Input{Last: last, LastBy: lastBy, History: recent, Queue: r.ctrl.Tracks(), Now: r.cfg.Deps.Now(), Rand: rng})
 	if err == nil {
 		r.commit.Lock()
 		r.mu.Lock()
