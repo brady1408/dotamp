@@ -199,13 +199,18 @@ func TestTheEncoderStopsWithTheLastListener(t *testing.T) {
 	}
 	cancel()
 	res.Body.Close()
+	// Running turns false at once; the encoder hands its feed back as it exits.
+	var feeds, dropped int
 	deadline := time.Now().Add(2 * time.Second)
-	for hub.Running() && time.Now().Before(deadline) {
+	for {
+		room.mu.Lock()
+		feeds, dropped = room.feeds, room.dropped
+		room.mu.Unlock()
+		if (!hub.Running() && dropped > 0) || time.Now().After(deadline) {
+			break
+		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	room.mu.Lock()
-	feeds, dropped := room.feeds, room.dropped
-	room.mu.Unlock()
 	if hub.Running() || feeds != 1 || dropped != 1 {
 		t.Fatalf("running %v feeds %d dropped %d", hub.Running(), feeds, dropped)
 	}
