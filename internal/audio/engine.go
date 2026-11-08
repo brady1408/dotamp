@@ -28,7 +28,9 @@ type Engine struct {
 	player   Player
 	ring     *Ring
 	tap      *Tap
-	feed     *Feed         // the output before the volume knob, for a broadcast
+	feed     *Feed // the output before the volume knob, for a broadcast
+	feedsMu  sync.Mutex
+	feeds    []*Feed       // extra copies of feed, e.g. a web listener's encoder
 	localMut atomic.Bool   // the device gets silence while a broadcast is live
 	done     chan struct{} // the audible source ended with nothing queued
 	switched chan struct{} // the audible source switched to the queued one
@@ -80,6 +82,27 @@ func (e *Engine) Rate() int { return e.rate }
 
 // Feed is the output before the volume knob, for one consumer.
 func (e *Engine) Feed() *Feed { return e.feed }
+
+// NewFeed adds another copy of the broadcast feed for a second consumer
+// (each feed has one reader); DropFeed removes it.
+func (e *Engine) NewFeed() *Feed {
+	f := NewFeed(e.rate * 2)
+	e.feedsMu.Lock()
+	e.feeds = append(e.feeds, f)
+	e.feedsMu.Unlock()
+	return f
+}
+
+func (e *Engine) DropFeed(f *Feed) {
+	e.feedsMu.Lock()
+	defer e.feedsMu.Unlock()
+	for i, x := range e.feeds {
+		if x == f {
+			e.feeds = append(e.feeds[:i], e.feeds[i+1:]...)
+			return
+		}
+	}
+}
 
 // SetLocalMute silences the device without touching the volume setting;
 // the feed and the visualizer tap keep flowing.
@@ -549,6 +572,11 @@ func (r *reader) Read(p []byte) (int, error) {
 		}
 	}
 	r.e.feed.Write(s) // a broadcast hears full level, whatever the local volume
+	r.e.feedsMu.Lock()
+	for _, f := range r.e.feeds {
+		f.Write(s)
+	}
+	r.e.feedsMu.Unlock()
 	vol := float32(r.e.Volume())
 	for i := range s {
 		s[i] *= vol
