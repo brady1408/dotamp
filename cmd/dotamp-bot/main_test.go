@@ -123,3 +123,29 @@ func TestGateRoutesRefusalsBeforeAnyDefer(t *testing.T) {
 		}
 	}
 }
+
+func TestListenIsOpenToAnyone(t *testing.T) {
+	if !allowed("listen", false, false, false) {
+		t.Fatal("/listen must be open to everyone in the server")
+	}
+	if refusal, deferred := gate(gateIn{cmd: "listen"}); refusal != "" || deferred {
+		t.Fatalf("gate(listen) = %q %v", refusal, deferred)
+	}
+}
+
+func TestWebConfigReadsTheSecretFromItsFile(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "discord-token"), []byte("tok\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "web-secret"), []byte("s3cret-s3cret-s3cret-s3cret-0000\n"), 0o600)
+	p := filepath.Join(dir, "config.json")
+	os.WriteFile(p, []byte(fmt.Sprintf(`{"discord_token_file":%q,"allow_guilds":["1"],"web":{"listen":":8097","base_url":"https://listen.bradycole.com","secret_file":%q}}`,
+		filepath.Join(dir, "discord-token"), filepath.Join(dir, "web-secret"))), 0o600)
+	cfg, sec, err := loadConfig(p)
+	if err != nil || cfg.Web == nil || cfg.Web.BaseURL != "https://listen.bradycole.com" || string(sec.web) != "s3cret-s3cret-s3cret-s3cret-0000" {
+		t.Fatalf("%v %+v", err, cfg.Web)
+	}
+	os.WriteFile(filepath.Join(dir, "web-secret"), []byte("short\n"), 0o600)
+	if _, _, err := loadConfig(p); err == nil {
+		t.Fatal("a short web secret must be refused")
+	}
+}

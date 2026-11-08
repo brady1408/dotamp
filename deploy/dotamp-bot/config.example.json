@@ -7,5 +7,6 @@
   "idle_leave_minutes": 5,
   "plex": {"url": "http://192.168.23.23:32400", "token_file": "/config/plex-token"},
   "navidrome": {"url": "http://192.168.23.44:4533", "user": "brady", "password_file": "/config/navidrome-password"},
-  "history_dir": "/config/history"
+  "history_dir": "/config/history",
+  "web": {"listen": ":8097", "base_url": "https://listen.bradycole.com", "secret_file": "/config/web-secret"}
 }

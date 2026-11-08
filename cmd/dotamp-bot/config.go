@@ -29,9 +29,17 @@ type Config struct {
 		PasswordFile string `json:"password_file"`
 	} `json:"navidrome"`
 	HistoryDir string `json:"history_dir"`
+	Web        *struct {
+		Listen     string `json:"listen"`      // e.g. ":8097"
+		BaseURL    string `json:"base_url"`    // e.g. "https://listen.bradycole.com"
+		SecretFile string `json:"secret_file"` // signs /listen links; rotate it to revoke every link
+	} `json:"web"`
 }
 
-type secrets struct{ discord, plex, navidrome string }
+type secrets struct {
+	discord, plex, navidrome string
+	web                      []byte
+}
 
 func (c Config) autoplay() bool { return c.Autoplay == nil || *c.Autoplay }
 
@@ -89,6 +97,16 @@ func loadConfig(path string) (Config, secrets, error) {
 		if sec.navidrome, err = read(cfg.Navidrome.PasswordFile); err != nil {
 			return cfg, sec, fmt.Errorf("navidrome password: %w", err)
 		}
+	}
+	if cfg.Web != nil {
+		w, err := read(cfg.Web.SecretFile)
+		if err != nil {
+			return cfg, sec, fmt.Errorf("web secret: %w", err)
+		}
+		if len(w) < 32 {
+			return cfg, sec, errors.New("web secret: use at least 32 characters (e.g. openssl rand -hex 32)")
+		}
+		sec.web = []byte(w)
 	}
 	return cfg, sec, nil
 }

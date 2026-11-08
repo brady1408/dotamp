@@ -17,7 +17,11 @@ import (
 	"github.com/brady1408/dotamp/internal/radio"
 	"github.com/brady1408/dotamp/internal/requests"
 	"github.com/brady1408/dotamp/internal/room"
+	"github.com/brady1408/dotamp/internal/weblisten"
 )
+
+// listenFor is how long a /listen link works.
+const listenFor = 12 * time.Hour
 
 func commandDefs() []discord.ApplicationCommandCreate {
 	one, max := 1, 25
@@ -26,6 +30,7 @@ func commandDefs() []discord.ApplicationCommandCreate {
 	}
 	return []discord.ApplicationCommandCreate{
 		discord.SlashCommandCreate{Name: "join", Description: "Bring the bot into your voice channel"},
+		discord.SlashCommandCreate{Name: "listen", Description: "Get a private link to hear the bot in a browser"},
 		discord.SlashCommandCreate{Name: "leave", Description: "Send the bot away"},
 		discord.SlashCommandCreate{Name: "play", Description: "Add a track, album or playlist", Options: what("Search the library")},
 		discord.SlashCommandCreate{Name: "queue", Description: "What is coming up and who asked", Options: []discord.ApplicationCommandOption{
@@ -118,6 +123,12 @@ func (b *houseBot) run(ctx context.Context, r *room.Room, g snowflake.ID, cmd st
 			return reply{Text: "Couldn't join: " + err.Error()}
 		}
 		return reply{Text: "Playing in " + chName, Public: true}
+	case "listen":
+		if b.cfg.Web == nil {
+			return reply{Text: "The web player isn't set up"}
+		}
+		tok := weblisten.Sign(b.webSecret, user.String(), time.Now().Add(listenFor))
+		return reply{Text: "Your link (12 hours, don't share it): " + strings.TrimRight(b.cfg.Web.BaseURL, "/") + "/l/" + tok}
 	case "leave":
 		r.Leave(ctx)
 		return reply{Text: "Left " + roomName, Public: true}

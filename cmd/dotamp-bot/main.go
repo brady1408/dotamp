@@ -41,13 +41,14 @@ import (
 var version = "dev"
 
 type houseBot struct {
-	cfg    Config
-	log    *slog.Logger
-	client *disgobot.Client
-	lib    *multi.Library
-	req    *requests.Core
-	rooms  map[snowflake.ID]*room.Room
-	ready  chan snowflake.ID // allowed guilds as their caches load
+	cfg       Config
+	log       *slog.Logger
+	client    *disgobot.Client
+	lib       *multi.Library
+	req       *requests.Core
+	rooms     map[snowflake.ID]*room.Room
+	ready     chan snowflake.ID // allowed guilds as their caches load
+	webSecret []byte
 }
 
 func main() {
@@ -112,7 +113,7 @@ func run(cfgPath string, log *slog.Logger) error {
 		return errors.New("no music library configured")
 	}
 
-	b := &houseBot{cfg: cfg, log: log, lib: lib, rooms: map[snowflake.ID]*room.Room{}, ready: make(chan snowflake.ID, 8)}
+	b := &houseBot{cfg: cfg, log: log, lib: lib, rooms: map[snowflake.ID]*room.Room{}, ready: make(chan snowflake.ID, 8), webSecret: sec.web}
 	b.req = requests.New(func() library.Library { return lib })
 	client, err := disgo.New(sec.discord,
 		disgobot.WithLogger(slog.New(warnOnly{log.Handler()})),
@@ -170,6 +171,11 @@ func run(cfgPath string, log *slog.Logger) error {
 		}
 		client.Close(cctx)
 	}()
+	if cfg.Web != nil && len(b.rooms) == 1 {
+		for _, r := range b.rooms {
+			go serveWeb(ctx, cfg.Web.Listen, r, sec.web, log)
+		}
+	}
 	go b.resumeRooms(ctx)
 	tick := time.NewTicker(15 * time.Second)
 	defer tick.Stop()

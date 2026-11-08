@@ -14,7 +14,7 @@ type reply struct {
 // allowed is the permission table agreed for the house bot.
 func allowed(cmd string, isDJ, inChannel, alone bool) bool {
 	switch cmd {
-	case "join":
+	case "join", "listen":
 		return true
 	case "play", "queue", "np", "skip", "remove":
 		return inChannel || isDJ
@@ -72,6 +72,8 @@ type gateIn struct {
 func gate(in gateIn) (refusal string, deferred bool) {
 	inChannel := in.roomCh != 0 && in.userCh == in.roomCh
 	switch in.cmd {
+	case "listen":
+		return "", false
 	case "join":
 		if in.userCh == 0 {
 			return "Join a voice channel first", false
