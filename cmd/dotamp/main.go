@@ -20,6 +20,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 
 	"github.com/brady1408/dotamp/internal/audio"
+	"github.com/brady1408/dotamp/internal/audio/otoout"
 	"github.com/brady1408/dotamp/internal/broadcast"
 	"github.com/brady1408/dotamp/internal/config"
 	"github.com/brady1408/dotamp/internal/control"
@@ -653,7 +654,7 @@ func run(debugLog, silent bool) (err error) {
 		out = audio.NewSilentOutput(rate)
 		log.Printf("output: silent at %d Hz", rate)
 	} else {
-		o, err := audio.NewOtoOutput(rate)
+		o, err := otoout.New(rate)
 		if err != nil {
 			return fmt.Errorf("audio device at %d Hz: %w", rate, err)
 		}
